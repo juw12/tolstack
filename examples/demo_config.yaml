@@ -1,0 +1,22 @@
+# tolstack run examples/demo_config.yaml
+title: Tolerance stack-up
+project: tolstack demo
+name: STEP - cap top vs post top
+type: step
+author: tolstack
+step: demo/demo_assembly.step
+axis: z
+from: {part: POST, face: top}        # reference face
+to: {part: CAP_TOP, face: top}       # result = to - from
+exclude: []                          # parts the chain must not pass through
+spec: {lsl: 1.2, usl: 2.0}
+drawings: [demo/drawings/*.pdf]      # matched to parts by file name
+general_tolerance:                   # [from, to, ±tol] used when the 2D has no tolerance
+  - [0, 10, 0.05]
+  - [10, 50, 0.10]
+  - [50, 1000000, 0.15]
+extra:                               # contributors that are not part thickness (bow, gaps, switch travel...)
+  - {label: X, part: PCB, description: PCB bow at contact (assumed), nominal: 0, tol_plus: 0.1, tol_minus: 0.1, direction: 1}
+overrides: {}                        # e.g. {B: {tol_plus: 0.03, tol_minus: 0.03, source: "CPK data"}}
+section: {cut_axis: y}
+output: out/demo_ta.xlsx

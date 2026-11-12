@@ -1,0 +1,9 @@
+cadquery-ocp>=7.7
+numpy>=1.24
+openpyxl>=3.1
+pymupdf>=1.23
+pillow>=10
+pyyaml>=6
+shapely>=2.0
+pandas>=2.0
+streamlit>=1.35

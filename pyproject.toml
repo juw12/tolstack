@@ -1,0 +1,30 @@
+[build-system]
+requires = ["setuptools>=64"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tolstack"
+version = "0.1.0"
+description = "1-D tolerance stack-up (gap / step) from a STEP assembly and 2D drawings, exported to Excel"
+readme = "README.md"
+license = {text = "MIT"}
+requires-python = ">=3.10"
+dependencies = [
+    "cadquery-ocp>=7.7",
+    "numpy>=1.24",
+    "openpyxl>=3.1",
+    "pymupdf>=1.23",
+    "pillow>=10",
+    "pyyaml>=6",
+    "shapely>=2.0",
+]
+
+[project.optional-dependencies]
+app = ["streamlit>=1.35", "pandas>=2.0"]
+dev = ["pytest"]
+
+[project.scripts]
+tolstack = "tolstack.cli:main"
+
+[tool.setuptools]
+packages = ["tolstack"]
