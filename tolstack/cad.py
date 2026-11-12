@@ -22,7 +22,11 @@ from OCP.TopExp import TopExp_Explorer
 from OCP.TopLoc import TopLoc_Location
 from OCP.TopoDS import TopoDS, TopoDS_Face, TopoDS_Shape
 from OCP.XCAFDoc import XCAFDoc_DocumentTool
-from OCP.collections import Sequence_TDF_Label
+
+try:  # cadquery-ocp >= 8
+    from OCP.collections import Sequence_TDF_Label
+except ImportError:  # cadquery-ocp 7.x (e.g. the newest wheels for Python 3.10)
+    from OCP.TDF import TDF_LabelSequence as Sequence_TDF_Label
 
 AXES = {"x": 0, "y": 1, "z": 2}
 
