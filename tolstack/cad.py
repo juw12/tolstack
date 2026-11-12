@@ -8,6 +8,7 @@ from OCP.BRep import BRep_Tool
 from OCP.BRepAdaptor import BRepAdaptor_Surface
 from OCP.BRepBndLib import BRepBndLib
 from OCP.BRepGProp import BRepGProp
+from OCP.BRepMesh import BRepMesh_IncrementalMesh
 from OCP.GeomAbs import GeomAbs_Plane
 from OCP.GProp import GProp_GProps
 from OCP.IFSelect import IFSelect_RetDone
@@ -19,7 +20,7 @@ from OCP.TDocStd import TDocStd_Document
 from OCP.TopAbs import TopAbs_FACE, TopAbs_REVERSED
 from OCP.TopExp import TopExp_Explorer
 from OCP.TopLoc import TopLoc_Location
-from OCP.TopoDS import TopoDS, TopoDS_Shape
+from OCP.TopoDS import TopoDS, TopoDS_Face, TopoDS_Shape
 from OCP.XCAFDoc import XCAFDoc_DocumentTool
 from OCP.collections import Sequence_TDF_Label
 
@@ -48,6 +49,8 @@ class PlanarFace:
     sign: int         # +1: outward normal points to +axis (a "top" face), -1: "bottom" face
     rect: tuple       # (u0, v0, u1, v1) bbox in the two other axes
     area: float
+    shape: TopoDS_Face | None = field(default=None, repr=False, compare=False)
+    axis: str = "z"
 
     @property
     def kind(self) -> str:
@@ -147,10 +150,51 @@ def planar_faces(part: Part, axis: str, min_area: float = 0.01) -> list[PlanarFa
                         sign=1 if n[a] > 0 else -1,
                         rect=(lo_c[others[0]], lo_c[others[1]], hi_c[others[0]], hi_c[others[1]]),
                         area=area,
+                        shape=face,
+                        axis=axis,
                     ))
         face_id += 1
         explorer.Next()
     return result
+
+
+_OUTLINES: dict = {}
+
+
+def face_outline(face: PlanarFace, deflection: float = 0.02):
+    """True 2-D outline of a planar face (holes included) as a shapely geometry, projected on the
+    plane normal to the stack-up axis. Built from the face triangulation; None if meshing fails."""
+    key = (id(face.shape), face.part, face.face_id)
+    if key in _OUTLINES:
+        return _OUTLINES[key]
+    outline = None
+    if face.shape is not None:
+        from shapely.geometry import Polygon
+        from shapely.ops import unary_union
+
+        BRepMesh_IncrementalMesh(face.shape, deflection, False, 0.5, False)
+        location = TopLoc_Location()
+        triangulation = BRep_Tool.Triangulation_s(face.shape, location)
+        if triangulation is not None:
+            a = AXES[face.axis]
+            others = [i for i in range(3) if i != a]
+            transform = location.Transformation()
+            nodes = []
+            for i in range(1, triangulation.NbNodes() + 1):
+                p = triangulation.Node(i).Transformed(transform)
+                c = (p.X(), p.Y(), p.Z())
+                nodes.append((c[others[0]], c[others[1]]))
+            triangles = []
+            for i in range(1, triangulation.NbTriangles() + 1):
+                t = triangulation.Triangle(i)
+                corners = [nodes[t.Value(k) - 1] for k in (1, 2, 3)]
+                tri = Polygon(corners)
+                if tri.area > 1e-12:
+                    triangles.append(tri)
+            if triangles:
+                outline = unary_union(triangles).buffer(0)
+    _OUTLINES[key] = outline
+    return outline
 
 
 def describe_face(face: PlanarFace, parts: list[Part]) -> str:
