@@ -5,7 +5,11 @@ in between, reads the tolerances from your 2D drawings (or the general-tolerance
 you worst case, RSS, Cp/Cpk and Monte Carlo results in an Excel file with live formulas, a colour
 section picture, the 2D evidence and a reviewer sign-off block.
 
-![section](docs/section_example.png)
+| pick the faces and the chain | check the chain (with section picture) | result |
+|---|---|---|
+| ![step 2](docs/app_step2.png) | ![step 3](docs/app_step3.png) | ![result](docs/app_result.png) |
+
+Try it in one command: `python -m tolstack demo tolstack_demo --run` (writes a demo STEP, 2D PDFs, a config and the Excel report).
 
 ## What it does
 
@@ -25,7 +29,7 @@ section picture, the 2D evidence and a reviewer sign-off block.
    - If the 3D nominal differs from the drawing nominal, the **drawing limits are kept** and the difference is noted.
    - Drawings without a text layer (text exported as lines) are flagged; with Tesseract installed they can be OCR'd.
    - Otherwise the **general tolerance table** applies (editable; default 0–10 ±0.05, 10–50 ±0.10, >50 ±0.15).
-5. **Analyzes**: nominal, mean shift for asymmetric tolerances, worst case, RSS, Cp, Cpk, predicted ppm,
+5. **Analyzes**: nominal, mean shift for asymmetric tolerances, worst case, RSS, Cp, Cpk, predicted ppm and yield,
    contribution %, and a Monte Carlo % out of spec. Each row can be `normal` (±3σ by default), `uniform`
    or `triangular`.
 6. **Writes Excel**: inputs in yellow, everything else a formula (edit a tolerance or a distribution and the
@@ -56,8 +60,10 @@ streamlit run app.py
 ```
 
 1. Sidebar: **Demo assembly** (to try it), upload the STEP and 2D PDFs, **or** type the path to the STEP and the drawing folder.
-2. Choose **Step** or **Gap**, then the *From* part + face and the *To* part + face; set LSL/USL.
+   A saved YAML config can be loaded at the top of the sidebar to restore an analysis.
+2. Choose **Step** or **Gap**, then the *From* part + face and the *To* part + face; set LSL/USL (optional).
 3. Pick the chain from the ranked list (and exclude parts that must not be in it), then **Build chain from 3D**.
+   A section picture of the chain appears right away.
 4. Check the table. Open "2D drawings" to assign a drawing to a part or choose another dimension candidate.
 5. Read the result (nominal, WC, RSS, verdict, Cpk, Monte Carlo), then **Create Excel**.
    **Download this analysis as a config** saves a YAML you can re-run from the command line.
@@ -65,7 +71,7 @@ streamlit run app.py
 ### Command line / batch
 
 ```bash
-python -m tolstack demo examples/demo                                  # demo STEP + 2D PDFs
+python -m tolstack demo examples/demo --run                            # demo STEP + 2D PDFs + config -> Excel
 python -m tolstack faces examples/demo/demo_assembly.step --axis z     # parts, faces, contact count
 python -m tolstack paths examples/demo_config.yaml                     # candidate chains
 python -m tolstack run examples/demo_config.yaml                       # -> examples/out/demo_ta.xlsx
@@ -110,5 +116,7 @@ Unknown keys are rejected, so a typo cannot silently change a result. See `examp
 pip install -e ".[app,dev]"
 pytest -q
 ```
+
+See `CONTRIBUTING.md` for the code layout and the rules for changes, and `CHANGELOG.md` for what changed.
 
 MIT licence.

@@ -121,6 +121,7 @@ def write_report(path: str | Path, contributors: list[Contributor], result: Resu
                 f'IF(B{s + 9}="",1E+99,(B{s + 1}-B{s + 9})/(3*B{s + 5})))))'),
         ("Predicted out of spec (ppm)", f'=IF(B{s + 5}=0,"",1000000*(IF(B{s + 9}="",0,NORMSDIST((B{s + 9}-B{s + 1})/B{s + 5}))'
                                         f'+IF(B{s + 10}="",0,1-NORMSDIST((B{s + 10}-B{s + 1})/B{s + 5}))))'),
+        ("Predicted yield %", f'=IF(B{s + 15}="","",100-B{s + 15}/10000)'),
         ("Monte Carlo mean / std (snapshot)", "" if result.mc_mean is None else f"{result.mc_mean:.4f} / {result.mc_std:.4f}"),
         ("Monte Carlo out of spec % (snapshot)", "" if result.mc_out_pct is None else round(result.mc_out_pct, 4)),
     ]
@@ -133,8 +134,9 @@ def write_report(path: str | Path, contributors: list[Contributor], result: Resu
     for spec_row in (s + 9, s + 10):
         ws.cell(spec_row, 2).fill = INPUT_FILL
     ws.cell(s + 15, 2).number_format = "0.0"
+    ws.cell(s + 16, 2).number_format = "0.000"
     if result.mc_samples:
-        ws.cell(s + 17, 3, f"{result.mc_samples:,} samples, per-row distributions; re-run tolstack after edits").font = GREY
+        ws.cell(s + 18, 3, f"{result.mc_samples:,} samples, per-row distributions; re-run tolstack after edits").font = GREY
 
     chart = BarChart()
     chart.type = "bar"

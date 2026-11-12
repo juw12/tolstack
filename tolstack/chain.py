@@ -36,8 +36,11 @@ class ChainOption:
     def describe(self, parts: list[Part]) -> str:
         if not self.steps:
             return "same part (no contacts needed)"
-        names = [parts[self.steps[0][0]].name] + [parts[child].name for _, child, _ in self.steps]
-        return f"{' -> '.join(names)}   ({self.hops} contacts, weakest overlap {self.min_overlap:.1f} mm2)"
+        text = parts[self.steps[0][0]].name
+        for _, child, contact in self.steps:
+            text += f" -> {parts[child].name}"
+        levels = ", ".join(f"{c.level:.3f}" for _, _, c in self.steps)
+        return (f"{text}   ({self.hops} contacts at {levels}; weakest overlap {self.min_overlap:.1f} mm2)")
 
 
 def _rect_overlap(r1, r2) -> float:
@@ -93,14 +96,19 @@ def find_contacts(faces: list[PlanarFace], tol: float = 0.02, min_overlap: float
 
 
 def _graph(contacts: list[Contact], exclude: set[int]):
-    """Adjacency with the strongest (largest overlap) contact per part pair."""
+    """Multigraph: every distinct contact level between two parts is its own edge.
+
+    Two parts can touch at more than one level (a stepped seat, a rib and a flange). Each level
+    gives a different chain, so they are kept apart and ranked instead of silently keeping the
+    largest one. Duplicate face pairs at the same level are merged (largest overlap kept).
+    """
     best: dict[tuple, Contact] = {}
     for c in contacts:
         if c.lower in exclude or c.upper in exclude:
             continue
-        pair = (min(c.lower, c.upper), max(c.lower, c.upper))
-        if pair not in best or c.overlap > best[pair].overlap:
-            best[pair] = c
+        key = (min(c.lower, c.upper), max(c.lower, c.upper), c.lower, round(c.level, 3))
+        if key not in best or c.overlap > best[key].overlap:
+            best[key] = c
     graph = defaultdict(list)
     for c in best.values():
         graph[c.lower].append((c.upper, c))

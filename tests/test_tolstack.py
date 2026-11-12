@@ -278,3 +278,25 @@ def test_excel_report_has_review_assumptions_and_capability(demo):
     assert "Approved by" in labels and "Assumptions" in wb.sheetnames
     assert ws.cell(14, 9).value == "uniform"
     assert result.cpk == pytest.approx(min(2.0 - result.mean, result.mean - 1.2) / (3 * result.sigma))
+
+
+
+def test_stepped_seat_gives_one_option_per_contact_level(tmp_path):
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
+
+    from tolstack.chain import build_chain, find_paths
+    from tolstack.demo import box, write_step
+    from tolstack.pipeline import find_face, load_model
+
+    base = BRepAlgoAPI_Cut(box(0, 0, 0, 40, 20, 7), box(-1, -1, 5, 20, 21, 8)).Shape()     # tops at 5 and 7
+    top = BRepAlgoAPI_Cut(box(0, 0, 5, 40, 20, 10), box(20, -1, 4, 41, 21, 7)).Shape()     # bottoms at 5 and 7
+    step = write_step(tmp_path / "stepped.step", [("BASE", base), ("TOP", top)])
+    model = load_model(str(step), "z")
+    start = find_face(model, "BASE", "bottom")
+    end = find_face(model, "TOP", "top")
+    options = find_paths(start.part, end.part, model.contacts)
+    levels = sorted(round(o.steps[0][2].level, 3) for o in options)
+    assert levels == [5.0, 7.0]
+    for option in options:
+        chain = build_chain(start, end, model.parts, model.contacts, steps=option.steps)
+        assert sum(c.direction * c.nominal for c in chain) == pytest.approx(10.0)

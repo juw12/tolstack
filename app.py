@@ -9,7 +9,7 @@ import yaml
 
 from tolstack.chain import build_chain, find_paths
 from tolstack.excel import write_report
-from tolstack.pipeline import CONFIG_VERSION, apply_tolerances, expand_drawings, load_model
+from tolstack.pipeline import CONFIG_VERSION, apply_tolerances, expand_drawings, load_model, validate_config
 from tolstack.stack import DISTRIBUTIONS, Contributor, analyze
 from tolstack.tolerances import DEFAULT_GENERAL_TABLE, tesseract_available
 
@@ -21,6 +21,7 @@ st.caption("1 Load a STEP assembly  ->  2 pick the two faces of the gap / step  
 WORK = Path(tempfile.gettempdir()) / "tolstack_app"
 WORK.mkdir(exist_ok=True)
 NUMERIC = ["nominal", "tol_plus", "tol_minus"]
+TYPES = ["Step (offset / flush between two faces)", "Gap (clearance between two faces)"]
 
 
 @st.cache_resource(show_spinner="Reading STEP and finding contacts...")
@@ -43,8 +44,36 @@ def reset_chain():
 
 # ---------------------------------------------------------------- 1. input files
 with st.sidebar:
+    saved = st.file_uploader("Load a saved analysis (YAML config)", type=["yaml", "yml"],
+                             help="A config downloaded from this app or written for `tolstack run`.")
+    if saved is not None and st.session_state.get("loaded_config_id") != saved.file_id:
+        try:
+            loaded = yaml.safe_load(saved.getvalue().decode("utf-8")) or {}
+            validate_config(loaded)
+            st.session_state.loaded_config_id = saved.file_id
+            st.session_state.input_mode = "Path on this computer"
+            st.session_state.step_input = str(loaded["step"])
+            globs = loaded.get("drawings") or []
+            if globs:
+                st.session_state.drawings_input = str(Path(globs[0]).parent)
+            st.session_state.axis = loaded.get("axis", "z")
+            st.session_state.contact_tol = float(loaded.get("contact_tol", 0.02))
+            st.session_state.sigma_level = float(loaded.get("sigma_level", 3.0))
+            spec = loaded.get("spec") or {}
+            if spec.get("lsl") is not None:
+                st.session_state.lsl = float(spec["lsl"])
+            if spec.get("usl") is not None:
+                st.session_state.usl = float(spec["usl"])
+            st.session_state.ta_type = TYPES[1] if loaded.get("type") == "gap" else TYPES[0]
+            st.session_state.pending_config = loaded
+            reset_chain()
+            st.success("Config loaded - check the faces, then build the chain.")
+        except (ValueError, KeyError, yaml.YAMLError) as err:
+            st.error(f"Could not load this config: {err}")
+
     st.header("1. Files")
     mode = st.radio("Input", ["Upload files", "Path on this computer", "Demo assembly"], horizontal=False,
+                    key="input_mode",
                     help="The demo is a 5-part box stack with 2D drawings - a quick way to see every step.")
     step_path, drawings = None, []
     if mode == "Upload files":
@@ -60,8 +89,8 @@ with st.sidebar:
             p.write_bytes(f.getbuffer())
             drawings.append(str(p))
     elif mode == "Path on this computer":
-        typed = st.text_input("STEP file path")
-        folder = st.text_input("2D drawings folder (optional)")
+        typed = st.text_input("STEP file path", key="step_input")
+        folder = st.text_input("2D drawings folder (optional)", key="drawings_input")
         if typed and Path(typed.strip('"')).is_file():
             step_path = Path(typed.strip('"'))
         elif typed:
@@ -79,12 +108,13 @@ with st.sidebar:
         st.caption("Demo: pick POST top -> CAP_TOP top for the +1.6 step.")
 
     st.header("Settings")
-    axis = st.selectbox("Stack-up direction (axis)", ["z", "y", "x"], on_change=reset_chain)
+    axis = st.selectbox("Stack-up direction (axis)", ["z", "y", "x"], key="axis", on_change=reset_chain)
     contact_tol = st.number_input("Contact tolerance (mm)", 0.001, 1.0, 0.02, 0.005, format="%.3f",
                                   help="Two faces closer than this count as touching. Raise it if a contact "
-                                       "is missed because of a small modelling gap.", on_change=reset_chain)
+                                       "is missed because of a small modelling gap.", key="contact_tol",
+                                  on_change=reset_chain)
     sigma_level = st.number_input("Sigma level for 'normal' rows", 1.0, 6.0, 3.0, 0.5,
-                                  help="Tolerance = +/- this many sigma. 3 is the usual choice.")
+                                  help="Tolerance = +/- this many sigma. 3 is the usual choice.", key="sigma_level")
     ocr = st.checkbox("OCR drawings without a text layer", value=False, disabled=not tesseract_available(),
                       help="Needs Tesseract installed. Without it, such drawings fall back to the general table.")
     st.subheader("General tolerance")
@@ -107,7 +137,7 @@ st.success(f"{len(model.parts)} parts, {len(model.faces)} faces normal to {axis.
 # ---------------------------------------------------------------- 2. choose the analysis
 st.header("2. What to analyze")
 c1, c2 = st.columns(2)
-ta_type = c1.radio("Type", ["Step (offset / flush between two faces)", "Gap (clearance between two faces)"])
+ta_type = c1.radio("Type", TYPES, key="ta_type")
 ta_name = c2.text_input("Analysis name", "Step A vs B" if ta_type.startswith("Step") else "Gap A to B")
 part_names = [f"[{p.index}] {p.name}" for p in model.parts]
 
@@ -129,16 +159,46 @@ def face_picker(column, title, default_kind):
     return faces[labels.index(choice)]
 
 
+pending = st.session_state.pop("pending_config", None)
+if pending:
+    def preset(title, spec):
+        matches = [p for p in model.parts if p.name.lower() == str(spec.get("part", "")).lower()]
+        if not matches:
+            st.warning(f"Config part '{spec.get('part')}' is not in this STEP.")
+            return
+        part = matches[0]
+        st.session_state[f"{title}_part"] = f"[{part.index}] {part.name}"
+        faces = [f for f in model.faces_of(part.index) if f.kind == spec.get("face", "top")]
+        if faces:
+            level = spec.get("level")
+            face = min(faces, key=lambda f: abs(f.level - level)) if level is not None else max(
+                faces, key=lambda f: (f.sign * f.level, f.area))
+            st.session_state[f"{title}_face"] = f"{face.kind} @ {face.level:.3f}  (area {face.area:.1f})"
+
+    preset("From (reference)", pending.get("from", {}))
+    preset("To", pending.get("to", {}))
+    names = {p.name.lower(): f"[{p.index}] {p.name}" for p in model.parts}
+    st.session_state.exclude = [names[n.lower()] for n in pending.get("exclude", []) if n.lower() in names]
+
 c1, c2 = st.columns(2)
 is_gap = ta_type.startswith("Gap")
 start = face_picker(c1, "From (reference)", "top")
 end = face_picker(c2, "To", "bottom" if is_gap else "top")
 exclude = st.multiselect("Parts the chain must NOT pass through (e.g. a big housing that touches everything)",
-                         part_names, on_change=reset_chain)
+                         part_names, key="exclude", on_change=reset_chain)
 s1, s2 = st.columns(2)
-lsl = s1.number_input("Spec lower limit (LSL)", value=0.0 if is_gap else -0.5, format="%.3f")
-usl = s2.number_input("Spec upper limit (USL)", value=1.0 if is_gap else 0.5, format="%.3f")
-if lsl > usl:
+if mode == "Demo assembly" and not st.session_state.get("demo_spec_set"):
+    st.session_state.lsl, st.session_state.usl = 1.2, 2.0      # the demo's real requirement
+    st.session_state.demo_spec_set = True
+st.session_state.setdefault("lsl", None)
+st.session_state.setdefault("usl", None)
+lsl = s1.number_input("Spec lower limit (LSL, optional)", value=None, format="%.3f", key="lsl",
+                      placeholder="no lower limit")
+usl = s2.number_input("Spec upper limit (USL, optional)", value=None, format="%.3f", key="usl",
+                      placeholder="no upper limit")
+if lsl is None and usl is None:
+    st.caption("No spec limits yet: you get nominal, worst case and RSS; the verdict and Cpk need a limit.")
+if lsl is not None and usl is not None and lsl > usl:
     st.error("LSL is above USL.")
     st.stop()
 if start is None or end is None:
@@ -217,6 +277,22 @@ with st.expander("2D drawings: which drawing belongs to which part, and which di
         st.session_state.pop("chain", None)
         st.rerun()
 
+with st.expander("Chain picture (section through the From face)", expanded=True):
+    from tolstack.section import render_section
+
+    chain_rows = [Contributor(**r) for r in st.session_state.raw_chain if "contact gap" not in r["source"]]
+    chain_idx = []
+    for c in chain_rows:
+        idx = next((p.index for p in model.parts if p.name == c.part), None)
+        if idx is not None and idx not in chain_idx:
+            chain_idx.append(idx)
+    preview_axis = st.selectbox("Section plane normal", [a for a in "xyz" if a != axis], key="preview_cut")
+    try:
+        st.image(render_section(str(WORK / "preview.png"), model.parts, chain_idx, start, end, chain_rows,
+                                axis, preview_axis))
+    except ValueError as err:
+        st.caption(f"No section picture: {err}")
+
 st.caption("Edit anything. Add rows for things the CAD cannot see: PCB bow, switch travel, assembly float, glue.")
 edited = st.data_editor(
     pd.DataFrame(st.session_state.chain)[["label", "part", "description", "nominal", "tol_plus", "tol_minus",
@@ -251,14 +327,18 @@ except ValueError as err:
     st.error(str(err))
     st.stop()
 st.header("4. Result")
-m = st.columns(6)
-m[0].metric("Nominal", f"{result.nominal:+.3f}")
-m[1].metric("Worst case", f"{result.wc_min:+.3f} ~ {result.wc_max:+.3f}", help=f"verdict {result.verdict('wc')}")
+has_spec = lsl is not None or usl is not None
+m = st.columns(3)
+m[0].metric("Nominal", f"{result.nominal:+.3f}", help=f"mean with asymmetric tolerances {result.mean:+.3f}")
+m[1].metric("Worst case", f"{result.wc_min:+.3f} ~ {result.wc_max:+.3f}",
+            help=f"WC verdict {result.verdict('wc') if has_spec else 'no spec'}")
 m[2].metric(f"RSS ({sigma_level:g}σ)", f"{result.rss_min:+.3f} ~ {result.rss_max:+.3f}")
-m[3].metric("RSS verdict", result.verdict("rss"))
-m[4].metric("Cpk", "-" if result.cpk is None else f"{result.cpk:.2f}",
-            help="Cpk >= 1.33 is a common target. From the mean and sigma of the sum.")
-m[5].metric("Monte Carlo out of spec", f"{result.mc_out_pct:.3f} %",
+m = st.columns(3)
+m[0].metric("RSS verdict", result.verdict("rss") if has_spec else "no spec")
+m[1].metric("Cpk", "-" if result.cpk is None else f"{result.cpk:.2f}",
+            help="Cpk >= 1.33 is a common target. From the mean and sigma of the sum."
+            + ("" if result.yield_pct is None else f" Predicted yield {result.yield_pct:.4f} %."))
+m[2].metric("Monte Carlo out of spec", f"{result.mc_out_pct:.3f} %" if has_spec else "-",
             help=f"{result.mc_samples:,} samples, per-row distributions. Normal approximation: {result.ppm:.0f} ppm"
             if result.ppm is not None else None)
 st.bar_chart(pd.DataFrame({"variance contribution %": result.contributions}, index=[c.label for c in contributors]))
@@ -272,7 +352,8 @@ st.header("5. Excel report")
 e1, e2, e3 = st.columns(3)
 author = e1.text_input("Prepared by", "")
 project = e2.text_input("Project", "")
-cut_axis = e3.selectbox("Section plane normal", [a for a in "xyz" if a != axis])
+cut_axis = st.session_state.get("preview_cut", [a for a in "xyz" if a != axis][0])
+e3.caption(f"Section plane normal: {cut_axis.upper()} (set in step 3)")
 with_section = st.checkbox("Add colour section picture", value=True)
 if st.button("Create Excel", key="excel"):
     section_png = None

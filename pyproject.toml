@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tolstack"
-version = "0.1.0"
+version = "0.2.0"
 description = "1-D tolerance stack-up (gap / step) from a STEP assembly and 2D drawings, exported to Excel"
 readme = "README.md"
 license = {text = "MIT"}
@@ -22,6 +22,10 @@ dependencies = [
 [project.optional-dependencies]
 app = ["streamlit>=1.35", "pandas>=2.0"]
 dev = ["pytest"]
+
+[project.urls]
+Homepage = "https://github.com/juw12/tolstack"
+Changelog = "https://github.com/juw12/tolstack/blob/main/CHANGELOG.md"
 
 [project.scripts]
 tolstack = "tolstack.cli:main"

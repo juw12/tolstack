@@ -2,11 +2,17 @@ name: tests
 on: [push, pull_request]
 jobs:
   test:
-    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, windows-latest]
+        python: ["3.10", "3.13"]
+    runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-python@v5
         with:
-          python-version: "3.12"
-      - run: pip install -r requirements.txt pytest
+          python-version: ${{ matrix.python }}
+      - run: pip install -e ".[app,dev]"
       - run: pytest -q
+      - run: python -m tolstack demo demo_ci --run

@@ -88,6 +88,11 @@ class Result:
     mc_out_pct: float | None = None
     mc_samples: int = 0
 
+    @property
+    def yield_pct(self) -> float | None:
+        """Predicted share of assemblies inside the spec (normal approximation)."""
+        return None if self.ppm is None else 100.0 - self.ppm / 1e4
+
     def verdict(self, method: str = "rss") -> str:
         lo, hi = (self.rss_min, self.rss_max) if method == "rss" else (self.wc_min, self.wc_max)
         if self.lsl is not None and lo < self.lsl:

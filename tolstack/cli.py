@@ -20,6 +20,7 @@ def main(argv=None):
     paths.add_argument("config")
     demo = sub.add_parser("demo", help="write the demo STEP + 2D drawings into a folder")
     demo.add_argument("folder", nargs="?", default="tolstack_demo")
+    demo.add_argument("--run", action="store_true", help="also write demo_config.yaml and run it -> Excel")
     args = parser.parse_args(argv)
 
     if args.cmd == "faces":
@@ -34,9 +35,13 @@ def main(argv=None):
                 print(f"     {f.kind:6s} @ {f.level:10.4f}   area {f.area:9.2f}")
         print(f"{len(model.contacts)} contacts found along {args.axis} (contact tolerance {model.contact_tol} mm)")
     elif args.cmd == "demo":
-        from .demo import write_demo
+        from .demo import write_demo, write_demo_config
 
-        print(f"demo written: {write_demo(Path(args.folder))}")
+        step = write_demo(Path(args.folder))
+        config_path = write_demo_config(Path(args.folder))
+        print(f"demo written: {step}\nconfig: {config_path}")
+        if args.run:
+            return main(["run", str(config_path)])
     elif args.cmd == "paths":
         from .chain import find_paths
         from .pipeline import find_face, find_part, load_model, validate_config

@@ -74,3 +74,32 @@ def write_demo(out: Path) -> Path:
     write_drawing(out / "drawings" / "POST.pdf", "POST", ["16.00±0.10"])
     write_drawing(out / "drawings" / "BASE.pdf", "BASE", ["60.00", "5.00"])
     return out / "demo_assembly.step"
+
+
+DEMO_CONFIG = """# written by `tolstack demo` - run with: tolstack run demo_config.yaml
+version: 1
+title: Tolerance stack-up
+project: tolstack demo
+name: STEP - cap top vs post top
+type: step
+author: tolstack
+step: demo_assembly.step
+axis: z
+from: {part: POST, face: top}
+to: {part: CAP_TOP, face: top}
+chain_option: 1
+contact_tol: 0.02
+spec: {lsl: 1.2, usl: 2.0}
+drawings: [drawings/*.pdf]
+extra:
+  - {label: X, part: PCB, description: PCB bow at contact (assumed), nominal: 0, tol_plus: 0.1, tol_minus: 0.1, direction: 1}
+section: {cut_axis: y}
+output: out/demo_ta.xlsx
+"""
+
+
+def write_demo_config(out: Path) -> Path:
+    """Write a ready-to-run config next to the demo files written by `write_demo`."""
+    path = Path(out) / "demo_config.yaml"
+    path.write_text(DEMO_CONFIG, encoding="utf-8")
+    return path

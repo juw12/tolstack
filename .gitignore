@@ -5,3 +5,6 @@ examples/demo/
 examples/out/
 *.xlsx
 !docs/*.xlsx
+demo_ci/
+tolstack_demo/
+*.egg-info/

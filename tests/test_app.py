@@ -27,7 +27,8 @@ def test_app_demo_flow_builds_chain_and_result():
     assert not at.exception
     metrics = {m.label: m.value for m in at.metric}
     assert metrics["Nominal"] == "+1.600"
-    assert metrics["Cpk"] != "-"
+    assert metrics["RSS verdict"] == "PASS"
+    assert float(metrics["Cpk"]) > 1.33          # demo spec 1.2..2.0 is preset
     spacer = [row for row in at.session_state["chain"] if row["part"] == "SPACER"][0]
     assert (spacer["tol_plus"], spacer["tol_minus"]) == (0.08, 0.08)
     assert "SPACER.pdf" in spacer["source"]
