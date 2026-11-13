@@ -179,6 +179,8 @@ with st.sidebar:
         try:
             loaded = yaml.safe_load(saved.getvalue().decode("utf-8")) or {}
             validate_config(loaded)
+            if "step" not in loaded:
+                raise ValueError("it has hand-written `rows` and no STEP file - run it with `tolstack run <config>`")
             st.session_state.loaded_config_id = saved.file_id
             config_step = Path(str(loaded["step"]))
             globs = loaded.get("drawings") or []

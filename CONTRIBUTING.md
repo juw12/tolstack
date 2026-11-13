@@ -10,7 +10,7 @@ git clone https://github.com/juw12/tolstack.git
 cd tolstack
 python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -e ".[app,dev]"
-pytest -q                                         # 72 tests, under a minute
+pytest -q                                         # 133 tests, about two minutes
 ruff check . && mypy                              # lint and types, both run in CI
 streamlit run app.py
 ```
@@ -23,7 +23,9 @@ streamlit run app.py
 | `tolstack/chain.py` | contacts, ranked candidate chains, chain -> contributors with closure check |
 | `tolstack/tolerances.py` | general table, PDF dimension search, evidence crops |
 | `tolstack/stack.py` | WC, RSS, distributions, Cp/Cpk/ppm, Monte Carlo |
-| `tolstack/excel.py` | the report (formulas, chart, assumptions, sign-off) |
+| `tolstack/excel.py` | the report (formulas, chart, measured sheet, assumptions, sign-off) |
+| `tolstack/measured.py` | measured groups and a typed or fitted limit against the stack |
+| `tolstack/pictures.py` | chart and table PNG for a mail or a slide |
 | `tolstack/pipeline.py` | config validation and the end-to-end `run_config` |
 | `tolstack/section.py` | colour section picture |
 | `tolstack/workspace.py` | per-session work folders of the app and their clean-up |

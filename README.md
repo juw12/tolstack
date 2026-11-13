@@ -47,6 +47,29 @@ Try it in one command: `python -m tolstack demo tolstack_demo --run` (writes a d
 You stay in control: the chain is an editable table, so you can change values, flip a direction, or add
 rows the CAD cannot see, such as PCB bow, switch travel, assembly float or glue thickness.
 
+### Without a STEP file, and after the stack-up (command line)
+
+Some stacks are not a chain of flat faces: the radial squeeze of a seal ring, a pin in a hole, a fit
+between two diameters. For those, write the rows yourself in a config (`rows`) and run it the same way:
+
+- **Hand-written rows.** Only `label` and `nominal` are needed. A row without a tolerance is looked up like
+  any other row: the 2D drawing of its `part`, then the general tolerance - and the source column says which.
+- **Diameter rows.** A size given as a diameter on the drawing but used on one side (radial) is written as
+  the diameter with `diameter: true`. The tolerance is looked up at the diameter, then size and tolerance are halved.
+- **A locating fit** (pilot / spigot, pin / hole) is two rows with opposite directions. With equal nominals
+  they cancel in the result and only add their tolerance - the usual contributor that is missing from a first stack.
+- **Measured parts** (`measured`): groups of readings, such as failed and good units, are placed against the
+  RSS and worst-case range: inside or outside, and how many readings are beyond the limit.
+- **A limit** (`limit`): the result that still works, typed in or **fitted from test points** (x = the stack
+  result, y = what the test measured; straight line by least squares, limit = x where the line crosses `y_limit`).
+  The report gives the RSS and worst-case margin to the limit and the predicted % of assemblies beyond it.
+- **Pictures** (`pictures: true`): `<output>_chart.png` (ranges, limit, measured groups, contribution) and
+  `<output>_table.png` (the stack table and the result), sized for a mail or a slide.
+
+The Excel file gets a **Measured** sheet (live: it reads the stack from the Stack-up sheet, the readings and the
+fit points are inputs, the limit is `SLOPE` / `INTERCEPT`) and a **Chart** sheet. Try it:
+`python -m tolstack run examples/seal_squeeze_config.yaml`.
+
 ## Install
 
 ```bash
@@ -107,6 +130,7 @@ python -m tolstack demo examples/demo --run                            # demo ST
 python -m tolstack faces examples/demo/demo_assembly.step --axis z     # parts, faces, contact count
 python -m tolstack paths examples/demo_config.yaml                     # candidate chains
 python -m tolstack run examples/demo_config.yaml                       # -> examples/out/demo_ta.xlsx
+python -m tolstack run examples/seal_squeeze_config.yaml               # hand-written rows, no STEP -> Excel + 2 PNG
 ```
 
 After `pip install -e .` the same commands work as `tolstack demo|faces|paths|run`.
@@ -126,11 +150,17 @@ After `pip install -e .` the same commands work as `tolstack demo|faces|paths|ru
 | `general_tolerance` | `[[from, to, ±tol], ...]` - the app table |
 | `general_from_drawing` | `true` (default): use the general-tolerance note of each part's drawing before the table |
 | `sigma_level`, `mc_samples` | tolerance = ±k σ for `normal` rows; Monte Carlo sample count |
-| `extra` | rows that are not part thickness (bow, travel, float …) |
+| `extra` | rows that are not part thickness (bow, travel, float …); same keys as `rows` |
+| `rows` | a stack written by hand, **instead of** `step` / `from` / `to`: `{label, nominal}` plus optional `part`, `description`, `tol_plus`, `tol_minus`, `direction` (+1 / -1), `dist`, `source`, `diameter` |
+| `diameter` (in a row) | `true`: nominal and tolerance are written as a diameter and halved for a one-side stack |
+| `measured` | groups of measured results: `[{name, values: [...]}]` or `[{name, min, max}]`, optional `result` text |
+| `limit` | `{value}` or a fit `{x: [...], y: [...], y_limit}`; optional `side` (`lower` default / `upper`) and `label` |
+| `pictures` | `true`: also write `<output>_chart.png` and `<output>_table.png` |
 | `overrides` | per row label, e.g. `{B: {tol_plus: 0.03, tol_minus: 0.03, dist: uniform, source: "CPK data"}}` |
 | `section`, `output`, `title`, `project`, `name`, `type`, `author` | report options |
 
-Unknown keys are rejected, so a typo cannot silently change a result. See `examples/demo_config.yaml`.
+Unknown keys are rejected, so a typo cannot silently change a result. See `examples/demo_config.yaml`
+and `examples/seal_squeeze_config.yaml`.
 
 ## Limits (read before trusting a result)
 
@@ -148,6 +178,11 @@ Unknown keys are rejected, so a typo cannot silently change a result. See `examp
 - A dimension that is not on the 2D is taken from the 3D with the general tolerance. That is common
   practice, but it is still an assumption, and the report says so in the source column.
 - Cp/Cpk and ppm assume the sum is normally distributed; Monte Carlo uses the per-row distributions.
+- **Hand-written rows are not checked against any 3D.** The signs and the list of rows are yours; a missing
+  contributor (a locating fit, a float) makes the range too narrow. They run from the command line only; the web app
+  needs a STEP file.
+- A **fitted limit** is a straight line through your test points. Read R² on the Measured sheet, and do not use the
+  limit outside the tested range. The % beyond the limit assumes a normal sum, like ppm.
 - Results are an engineering estimate. They do not replace a formal tolerance analysis or measured data (FAI/CPK).
 
 ## Development

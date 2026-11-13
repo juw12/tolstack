@@ -17,6 +17,7 @@ from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.worksheet.datavalidation import DataValidation
 
+from .measured import Group, Limit
 from .stack import Contributor, Result, sensitivity
 
 HEADERS = ["Item", "Part", "Description", "Source", "Nominal", "+Tol", "-Tol", "Dir (+1/-1)", "Dist",
@@ -38,7 +39,8 @@ def _fit_image(path, max_width_px):
 
 
 def write_report(path: str | Path, contributors: list[Contributor], result: Result, meta: dict,
-                 section_png: str | None = None) -> str:
+                 section_png: str | None = None, measured: list[Group] | None = None, limit: Limit | None = None,
+                 chart_png: str | None = None) -> str:
     wb = Workbook()
     ws = wb.active
     ws.title = "Stack-up"
@@ -51,7 +53,7 @@ def write_report(path: str | Path, contributors: list[Contributor], result: Resu
         ("Axis", meta.get("axis", "")),
         ("From", meta.get("from", "")),
         ("To", meta.get("to", "")),
-        ("Sign convention", "Result = To level - From level (+ = along +axis)"),
+        ("Sign convention", meta.get("sign", "Result = To level - From level (+ = along +axis)")),
         ("Author / date", f"{meta.get('author', '')}  {datetime.date.today().isoformat()}"),
         ("Sigma level (RSS)", float(meta.get("sigma", result.sigma_level))),
     ]
@@ -180,6 +182,13 @@ def write_report(path: str | Path, contributors: list[Contributor], result: Resu
     ws.print_title_rows = f"{head}:{head}"
 
     _sensitivity_sheet(wb, contributors, result, first, last, rss_row=s + 6, sigma_cell=sigma_cell)
+    if measured or limit is not None:
+        _measured_sheet(wb, measured or [], limit, result_row=s)
+    if chart_png and Path(chart_png).exists():
+        ws_chart = wb.create_sheet("Chart")
+        ws_chart["A1"] = "Range of the result and contribution of each row (picture from the export, not live)"
+        ws_chart["A1"].font = Font(size=14, bold=True)
+        ws_chart.add_image(_fit_image(chart_png, 1100), "A3")
     _assumptions_sheet(wb, meta, result)
 
     refs = [c for c in contributors if c.ref_image and Path(c.ref_image).exists()]
@@ -260,19 +269,134 @@ def _sensitivity_sheet(wb, contributors: list[Contributor], result: Result, firs
         ws.column_dimensions[letter].width = width
 
 
+def _measured_sheet(wb, groups: list[Group], limit: Limit | None, result_row: int) -> None:
+    """Measured groups and the limit against the stack. The stack values are live references to the
+    Stack-up sheet and the fitted limit is SLOPE / INTERCEPT on the fit points, so editing a tolerance,
+    a reading or a test point recalculates every verdict here."""
+    ws = wb.create_sheet("Measured")
+    ws["A1"] = "Measured parts and the limit against the stack-up"
+    ws["A1"].font = Font(size=14, bold=True)
+    ws["A2"] = ("Yellow cells are inputs. The stack values come from the Stack-up sheet. 'Beyond the limit %' uses "
+                "the mean and sigma of the stack (normal approximation).")
+    ws["A2"].font = GREY
+    src = "'Stack-up'!$B$"
+    stack = [("Mean", result_row + 1), ("RSS min", result_row + 7), ("RSS max", result_row + 8),
+             ("Worst case min", result_row + 3), ("Worst case max", result_row + 4), ("Sigma of the sum", result_row + 5)]
+    for r, (name, row) in enumerate(stack, start=4):                      # B4..B9
+        ws.cell(r, 1, name).font = Font(bold=True)
+        cell = ws.cell(r, 2, f"={src}{row}")
+        cell.number_format = "0.000"
+        cell.border = BOX
+
+    head = 17
+    fit_row = head + len(groups) + 3                                      # first row of the fit block
+    names = [(11, "Limit"), (12, "Limit side (lower / upper)"), (13, "Predicted beyond the limit %"),
+             (14, "RSS margin to the limit"), (15, "Worst-case margin to the limit")]
+    for r, name in names:
+        ws.cell(r, 1, name).font = Font(bold=True)
+        ws.cell(r, 2).border = BOX
+        ws.cell(r, 2).number_format = "0.000"
+    if limit is not None:
+        ws["C11"] = limit.label
+        ws["C11"].font = GREY
+        if limit.fitted:
+            ws["B11"] = f"=(B{fit_row + 3}-B{fit_row + 2})/B{fit_row + 1}"
+        else:
+            ws["B11"] = limit.value
+            ws["B11"].fill = INPUT_FILL
+        ws["B12"] = limit.side
+        ws["B12"].fill = INPUT_FILL
+        side_rule = DataValidation(type="list", formula1='"lower,upper"', allow_blank=False)
+        ws.add_data_validation(side_rule)
+        side_rule.add(ws["B12"])
+    ws["B13"] = ('=IF($B$11="","",IF($B$9=0,IF(OR(AND($B$12="lower",$B$4<$B$11),AND($B$12="upper",$B$4>$B$11)),100,0),'
+                 '100*IF($B$12="lower",NORMSDIST(($B$11-$B$4)/$B$9),1-NORMSDIST(($B$11-$B$4)/$B$9))))')
+    ws["B13"].number_format = "0.00"
+    ws["B14"] = '=IF($B$11="","",IF($B$12="lower",$B$5-$B$11,$B$11-$B$6))'
+    ws["B15"] = '=IF($B$11="","",IF($B$12="lower",$B$7-$B$11,$B$11-$B$8))'
+
+    columns = ["Group", "Result", "n", "Min", "Max", "Mean", "Inside RSS range", "Inside worst-case range",
+               "Against the limit", "Readings beyond the limit", "Readings ->"]
+    for col, name in enumerate(columns, start=1):
+        cell = ws.cell(head, col, name)
+        cell.font = Font(bold=True)
+        cell.fill = HEAD_FILL
+        cell.border = BOX
+        cell.alignment = Alignment(wrap_text=True, horizontal="center", vertical="center")
+    for r, g in enumerate(groups, start=head + 1):
+        ws.cell(r, 1, g.name)
+        ws.cell(r, 2, g.result)
+        if g.values:
+            first_col = ws.cell(r, 12).column_letter
+            last_col = ws.cell(r, 11 + len(g.values)).column_letter
+            readings = f"${first_col}{r}:${last_col}{r}"
+            for col, value in enumerate(g.values, start=12):
+                ws.cell(r, col, value).fill = INPUT_FILL
+            ws.cell(r, 3, f"=COUNT({readings})")
+            ws.cell(r, 4, f"=MIN({readings})")
+            ws.cell(r, 5, f"=MAX({readings})")
+            ws.cell(r, 6, f"=AVERAGE({readings})")
+            ws.cell(r, 10, f'=IF($B$11="","",IF($B$12="lower",COUNTIF({readings},"<"&$B$11),COUNTIF({readings},">"&$B$11)))')
+        else:
+            ws.cell(r, 4, g.low).fill = INPUT_FILL
+            ws.cell(r, 5, g.high).fill = INPUT_FILL
+        ws.cell(r, 7, f'=IF(AND(D{r}>=$B$5,E{r}<=$B$6),"yes","no")')
+        ws.cell(r, 8, f'=IF(AND(D{r}>=$B$7,E{r}<=$B$8),"yes","no")')
+        ws.cell(r, 9, f'=IF($B$11="","",IF($B$12="lower",'
+                      f'IF(E{r}<$B$11,"all beyond",IF(D{r}>=$B$11,"all inside","some beyond")),'
+                      f'IF(D{r}>$B$11,"all beyond",IF(E{r}<=$B$11,"all inside","some beyond"))))')
+        for col in range(1, 11):
+            ws.cell(r, col).border = BOX
+        for col in (4, 5, 6):
+            ws.cell(r, col).number_format = "0.000"
+
+    if limit is not None and limit.fitted:
+        last = fit_row + 5 + len(limit.x)
+        points_x, points_y = f"$A${fit_row + 6}:$A${last}", f"$B${fit_row + 6}:$B${last}"
+        ws.cell(fit_row, 1, f"Limit fit: y = slope * x + intercept, {limit.label} = x where y = y limit").font = Font(bold=True)
+        block = [("Slope", f"=SLOPE({points_y},{points_x})"), ("Intercept", f"=INTERCEPT({points_y},{points_x})"),
+                 ("y limit", limit.y_limit), ("R squared", f"=RSQ({points_y},{points_x})")]
+        for r, (name, content) in enumerate(block, start=fit_row + 1):
+            ws.cell(r, 1, name).font = Font(bold=True)
+            cell = ws.cell(r, 2, content)
+            cell.border = BOX
+            cell.number_format = "0.0000"
+        ws.cell(fit_row + 3, 2).fill = INPUT_FILL
+        for col, name in enumerate(["x (result)", "y (test)"], start=1):
+            cell = ws.cell(fit_row + 5, col, name)
+            cell.font = Font(bold=True)
+            cell.fill = HEAD_FILL
+            cell.border = BOX
+        for r, (x, y) in enumerate(zip(limit.x, limit.y, strict=True), start=fit_row + 6):
+            for col, value in ((1, x), (2, y)):
+                cell = ws.cell(r, col, value)
+                cell.fill = INPUT_FILL
+                cell.border = BOX
+    for letter, width in zip("ABCDEFGHIJK", [30, 12, 8, 10, 10, 10, 12, 14, 14, 14, 11], strict=True):
+        ws.column_dimensions[letter].width = width
+
+
 def _assumptions_sheet(wb, meta: dict, result: Result):
     ws = wb.create_sheet("Assumptions")
     ws["A1"] = "Inputs, method and assumptions"
     ws["A1"].font = Font(size=14, bold=True)
-    lines = [
-        ("Model", meta.get("step", "")),
-        ("Length unit of the STEP file", f"{meta.get('units', 'mm')} (all values in this report are in mm)"),
-        ("Chain used", meta.get("chain", "")),
-    ]
+    lines = [("Model", meta.get("step", ""))]
+    if meta.get("manual"):
+        lines.append(("Length unit", "mm, as written in the rows"))
+    else:
+        lines.append(("Length unit of the STEP file", f"{meta.get('units', 'mm')} (all values in this report are in mm)"))
+    lines.append(("Chain used", meta.get("chain", "")))
     for alt in meta.get("alternatives", []):
         lines.append(("Other chain found", alt))
+    if not meta.get("manual"):
+        lines.append(("Contact tolerance (mm)", meta.get("contact_tol", "")))
+    if meta.get("diameter_rows"):
+        lines.append(("Diameter rows", f"{', '.join(meta['diameter_rows'])}: written as a diameter on the drawing; the "
+                                       "tolerance was looked up at that size, then size and tolerance were halved "
+                                       "for a one-side (radial) stack"))
+    for line in meta.get("measured_lines", []):
+        lines.append(("Measured / limit (snapshot)", line))
     lines += [
-        ("Contact tolerance (mm)", meta.get("contact_tol", "")),
         ("Method", "1-D stack along the axis; worst case = sum of half ranges; RSS = k * sqrt(sum sigma^2)"),
         ("Asymmetric tolerances", "centred first: mean shift = (+tol - -tol)/2, half range = (+tol + -tol)/2"),
         ("Distributions",

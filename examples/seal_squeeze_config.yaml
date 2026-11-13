@@ -1,0 +1,35 @@
+# tolstack run examples/seal_squeeze_config.yaml
+#
+# A stack written by hand - no STEP file. Radial squeeze of a seal ring between a bore and a groove,
+# with the two parts centred on each other by a pilot / spigot fit. All numbers are made up.
+#
+#   squeeze = cord - (bore radius - groove radius) + (pilot radius - spigot radius)
+#
+# The drawing gives diameters, the squeeze is on one side, so those rows say `diameter: true`:
+# the tolerance is looked up at the diameter, then size and tolerance are halved.
+version: 1
+title: Tolerance stack-up
+project: tolstack example
+name: Seal ring - radial squeeze
+author: tolstack
+spec: {lsl: 0.15, usl: 0.45}
+sigma_level: 3
+mc_samples: 100000
+rows:
+  - {label: C, part: SEAL, description: Seal cord diameter, nominal: 1.50, tol_plus: 0.05, tol_minus: 0.05, direction: 1}
+  - {label: A, part: HOUSING, description: Bore diameter, nominal: 30.00, tol_plus: 0.10, tol_minus: 0.10, direction: -1, diameter: true}
+  - {label: B, part: SHAFT, description: Groove diameter, nominal: 27.60, tol_plus: 0.08, tol_minus: 0.08, direction: 1, diameter: true}
+  # the locating fit: nominal clearance 0, so the two rows cancel in the nominal and only add tolerance
+  - {label: D1, part: HOUSING, description: Pilot bore diameter (no tolerance on the drawing), nominal: 29.00, direction: 1, diameter: true}
+  - {label: D2, part: SHAFT, description: Spigot diameter, nominal: 29.00, tol_plus: 0.08, tol_minus: 0.08, direction: -1, diameter: true}
+measured:                            # where do real parts sit in the range? values, or just {name, min, max}
+  - {name: Leaking units, result: leak, values: [0.14, 0.17, 0.19, 0.16]}
+  - {name: Good units, result: pass, values: [0.27, 0.31, 0.29, 0.33, 0.30]}
+limit:                               # which squeeze still seals? fitted from a test, or typed in as {value: 0.2}
+  label: min squeeze
+  side: lower                        # results below the limit fail ("upper": results above it fail)
+  x: [0.10, 0.15, 0.20, 0.25, 0.30]  # squeeze of the test samples
+  y: [3.1, 3.9, 5.1, 5.9, 7.1]       # pressure each one held
+  y_limit: 5                         # pressure that has to be held
+pictures: true                       # also write out/seal_squeeze_ta_chart.png and _table.png (for a mail or a slide)
+output: out/seal_squeeze_ta.xlsx

@@ -3,6 +3,36 @@
 All notable changes to tolstack. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/). Config files carry their own `version` (currently 1).
 
+## [0.7.0] - 2026-11-13
+
+A stack-up that is not a chain of flat faces (a radial seal squeeze, a fit between two diameters), and what comes
+after the stack-up: where the measured parts sit, and which result still works.
+
+### Added
+- **Stacks written by hand**: config key `rows` instead of `step` / `from` / `to`. Only `label` and `nominal` are
+  needed; a row without a tolerance is looked up on the 2D drawing of its part, then in the general tolerance.
+  `tolstack run` works as before; `tolstack paths` says there are no chains to list.
+- **Diameter rows**: `diameter: true` in a row of `rows` or `extra`. The tolerance is looked up at the diameter
+  written on the drawing, then nominal and tolerance are halved for a one-side stack. The source column says so.
+- **Measured groups** (`measured`): readings or a min / max per group, compared with the RSS and worst-case range.
+- **A limit on the result** (`limit`): typed in, or fitted by least squares from test points (`x`, `y`, `y_limit`).
+  Gives the RSS and worst-case margin and the predicted % of assemblies beyond the limit (normal approximation).
+- **Excel sheet "Measured"**: live formulas - the stack values are references to the Stack-up sheet, the readings and
+  the fit points are inputs, the limit is `SLOPE` / `INTERCEPT`, R² is shown. Checked against the Python result
+  by recalculating in Excel.
+- **Pictures** (`pictures: true`): `<output>_chart.png` (ranges, limit, measured groups, contribution %) and
+  `<output>_table.png` (stack table and result), plus an Excel sheet "Chart".
+- `examples/seal_squeeze_config.yaml`: a seal ring squeezed between a bore and a groove, with the pilot / spigot fit
+  as two rows that cancel in the nominal and only add tolerance. All numbers are made up.
+
+### Changed
+- `matplotlib` is now a dependency (pictures).
+- Rows under `extra` are validated like `rows`: unknown keys are rejected, `label` and `nominal` are required.
+- The web app says clearly that a config with hand-written rows runs from the command line.
+
+### Fixed
+- `requirements.txt` was missing `py7zr` (needed for 7z since 0.5.0).
+
 ## [0.6.0] - 2026-11-13
 
 ### Added

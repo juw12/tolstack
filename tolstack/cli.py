@@ -1,4 +1,7 @@
-"""Command line: `tolstack faces model.step` and `tolstack run config.yaml`."""
+"""Command line: `tolstack faces model.step` and `tolstack run config.yaml`.
+
+`run` also takes a config without a STEP file: hand-written `rows`, see examples/seal_squeeze_config.yaml.
+"""
 from __future__ import annotations
 
 import argparse
@@ -51,6 +54,9 @@ def main(argv=None):
         config_path = Path(args.config)
         config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
         validate_config(config)
+        if "step" not in config:
+            print("this config has hand-written rows and no STEP file, so there are no chains to list")
+            return
         step = Path(config["step"])
         if not step.is_absolute():
             step = config_path.parent / step

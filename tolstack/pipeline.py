@@ -7,6 +7,7 @@ from pathlib import Path, PureWindowsPath
 
 from .cad import Part, PlanarFace, describe_face, load_step, planar_faces, step_length_units, unit_note
 from .chain import Contact, build_chain, find_contacts, find_paths
+from .measured import read_groups, read_limit, summary_lines
 from .stack import Contributor, Result, analyze, is_extra
 from .tolerances import (
     DEFAULT_GENERAL_TABLE,
@@ -27,8 +28,9 @@ CONFIG_KEYS = {
     "version", "title", "project", "name", "type", "author", "step", "axis", "from", "to",
     "exclude", "spec", "drawings", "drawing_map", "general_tolerance", "extra", "overrides",
     "section", "output", "contact_tol", "chain_option", "sigma_level", "mc_samples", "ocr",
-    "general_from_drawing",
+    "general_from_drawing", "rows", "measured", "limit", "pictures",
 }
+ROW_KEYS = {"label", "part", "description", "nominal", "tol_plus", "tol_minus", "direction", "source", "dist", "diameter"}
 
 
 @dataclass
@@ -224,9 +226,24 @@ def validate_config(config: dict) -> list[str]:
     version = config.get("version", CONFIG_VERSION)
     if version != CONFIG_VERSION:
         raise ValueError(f"config version {version} is not supported (this tolstack reads version {CONFIG_VERSION})")
-    for key in ("step", "from", "to"):
-        if key not in config:
-            raise ValueError(f"config needs '{key}'")
+    if "step" in config:
+        for key in ("from", "to"):
+            if key not in config:
+                raise ValueError(f"config needs '{key}'")
+        if "rows" in config:
+            raise ValueError("'rows' is for a stack without a STEP file; with 'step', add hand-written rows under 'extra'")
+    elif not config.get("rows"):
+        raise ValueError("config needs 'step' (with 'from' and 'to'), or 'rows' for a stack written by hand")
+    for key in ("rows", "extra"):
+        for index, row in enumerate(config.get(key) or [], start=1):
+            unknown = sorted(set(row) - ROW_KEYS)
+            if unknown:
+                raise ValueError(f"{key} row {index}: unknown keys {unknown}; allowed: {sorted(ROW_KEYS)}")
+            for needed in ("label", "nominal"):
+                if needed not in row:
+                    raise ValueError(f"{key} row {index} needs '{needed}'")
+    read_groups(config.get("measured"))
+    read_limit(config.get("limit"))
     if config.get("axis", "z") not in ("x", "y", "z"):
         raise ValueError("axis must be x, y or z")
     warnings = []
@@ -236,6 +253,28 @@ def validate_config(config: dict) -> list[str]:
     if spec.get("lsl") is None and spec.get("usl") is None:
         warnings.append("no spec limits: verdict, Cp/Cpk and out-of-spec % are not meaningful")
     return warnings
+
+
+def hand_row(row: dict) -> tuple[Contributor, bool]:
+    """A row of `rows` / `extra` as a contributor, and whether it is written as a diameter.
+
+    Only `label` and `nominal` are needed: no tolerance means "look it up" (2D drawing, then the general
+    tolerance), direction defaults to +1.
+    """
+    fields = {"part": "", "description": "", "tol_plus": 0.0, "tol_minus": 0.0, "direction": 1, "source": "manual",
+              **{k: v for k, v in row.items() if k != "diameter"}}
+    return Contributor(**fields), bool(row.get("diameter", False))
+
+
+def halve_diameter(c: Contributor) -> None:
+    """A dimension given on a diameter, used in a one-side (radial) stack: half the size, half the tolerance.
+
+    Called after the tolerance lookup, so the drawing and the general-tolerance table are read at the size
+    that is written on the drawing (the diameter), not at half of it.
+    """
+    full = c.nominal
+    c.nominal, c.tol_plus, c.tol_minus = (round(v / 2, 6) for v in (c.nominal, c.tol_plus, c.tol_minus))
+    c.source = f"{c.source}; Ø{full:g} on the drawing -> half for a one-side stack"
 
 
 def expand_drawings(patterns: list[str] | None, base: Path) -> list[str]:
@@ -259,27 +298,36 @@ def run_config(config: dict, base: str | Path = ".",
 
     warnings = validate_config(config)
     base = Path(base)
-    step = Path(config["step"])
-    if not step.is_absolute():
-        step = base / step
     axis = config.get("axis", "z")
-    model = load_model(str(step), axis, float(config.get("contact_tol", 0.02)))
-    if model.unit_note:
-        warnings.append(model.unit_note)
-    f, t = config["from"], config["to"]
-    start = find_face(model, f["part"], f.get("face", "top"), f.get("level"))
-    end = find_face(model, t["part"], t.get("face", "top"), t.get("level"))
-    exclude = {find_part(model, q).index for q in config.get("exclude", [])}
-    options = find_paths(start.part, end.part, model.contacts, exclude - {start.part, end.part})
-    if not options:
-        build_chain(start, end, model.parts, model.contacts, exclude)  # raises with the explanation
-    choice = int(config.get("chain_option", 1))
-    if not 1 <= choice <= len(options):
-        raise ValueError(f"chain_option {choice} out of range 1..{len(options)}")
-    contributors = build_chain(start, end, model.parts, model.contacts, exclude, options[choice - 1].steps)
+    model = None
+    contributors: list[Contributor] = []
+    if "step" in config:
+        step = Path(config["step"])
+        if not step.is_absolute():
+            step = base / step
+        model = load_model(str(step), axis, float(config.get("contact_tol", 0.02)))
+        if model.unit_note:
+            warnings.append(model.unit_note)
+        f, t = config["from"], config["to"]
+        start = find_face(model, f["part"], f.get("face", "top"), f.get("level"))
+        end = find_face(model, t["part"], t.get("face", "top"), t.get("level"))
+        exclude = {find_part(model, q).index for q in config.get("exclude", [])}
+        options = find_paths(start.part, end.part, model.contacts, exclude - {start.part, end.part})
+        if not options:
+            build_chain(start, end, model.parts, model.contacts, exclude)  # raises with the explanation
+        choice = int(config.get("chain_option", 1))
+        if not 1 <= choice <= len(options):
+            raise ValueError(f"chain_option {choice} out of range 1..{len(options)}")
+        contributors = build_chain(start, end, model.parts, model.contacts, exclude, options[choice - 1].steps)
 
-    for row in config.get("extra", []):
-        contributors.append(Contributor(**{"source": "manual", **row}))
+    by_hand: list[Contributor] = []          # rows typed in the config, i.e. not read from the 3D chain
+    diameters: list[Contributor] = []
+    for row in [*(config.get("rows") or []), *(config.get("extra") or [])]:
+        contributor, is_diameter = hand_row(row)
+        contributors.append(contributor)
+        by_hand.append(contributor)
+        if is_diameter:
+            diameters.append(contributor)
     overrides = config.get("overrides", {})
     for c in contributors:
         for k, v in overrides.get(c.label, {}).items():
@@ -301,15 +349,23 @@ def run_config(config: dict, base: str | Path = ".",
                      follow_drawing=bool(config.get("general_from_drawing", True)), general_out=general)
     gdt_lines = [f"{part}: {hit.label()}" for part, hits in gdt.items() for hit in hits]
     general_lines = [f"{part}: {note.label()}" for part, note in general.items() if note is not None]
+    for c in diameters:
+        halve_diameter(c)
 
     spec = config.get("spec", {})
     sigma_level = float(config.get("sigma_level", 3.0))
     result = analyze(contributors, spec.get("lsl"), spec.get("usl"),
                      mc_samples=int(config.get("mc_samples", 100_000)), sigma_level=sigma_level)
 
+    groups = read_groups(config.get("measured"))
+    limit = read_limit(config.get("limit"))
+    measured_lines = summary_lines(groups, result, limit)
+
     section_png = None
     section = config.get("section")
-    if section is not None:
+    if section is not None and model is None:
+        warnings.append("section picture skipped: it needs a STEP file")
+    elif section is not None and model is not None:
         from .section import render_section
 
         chain_parts = []
@@ -319,36 +375,60 @@ def run_config(config: dict, base: str | Path = ".",
                 chain_parts.append(idx)
         section_png = str(out.parent / f"{out.stem}_section.png")
         try:
-            render_section(section_png, model.parts, chain_parts, start, end,
-                           [c for c in contributors if not is_extra(c) and "contact gap" not in c.source], axis,
+            chain_rows = [c for c in contributors
+                          if not any(c is h for h in by_hand) and not is_extra(c) and "contact gap" not in c.source]
+            render_section(section_png, model.parts, chain_parts, start, end, chain_rows, axis,
                            section.get("cut_axis", "y" if axis != "y" else "x"), section.get("offset"))
         except ValueError as err:
             warnings.append(f"section picture skipped: {err}")
             section_png = None
 
+    title = config.get("title", "Tolerance stack-up")
+    chart_png = table_png = None
+    if config.get("pictures"):
+        from .pictures import write_pictures
+
+        chart_png, table_png = write_pictures(out.with_suffix(""), contributors, result, groups, limit,
+                                              config.get("name") or title)
+
     meta = {
-        "title": config.get("title", "Tolerance stack-up"),
+        "title": title,
         "project": config.get("project", ""),
         "name": config.get("name", ""),
-        "type": config.get("type", "step"),
-        "axis": axis,
-        "from": model.label(start),
-        "to": model.label(end),
         "author": config.get("author", ""),
         "sigma": sigma_level,
-        "contact_tol": model.contact_tol,
         "general_table": table,
-        "chain": options[choice - 1].describe(model.parts),
-        "alternatives": [o.describe(model.parts) for i, o in enumerate(options) if i != choice - 1],
         "warnings": warnings,
-        "step": str(step),
-        "units": " + ".join(model.units) or "not declared",
         "gdt": gdt_lines,
         "general_notes": general_lines,
+        "diameter_rows": [c.label for c in diameters],
+        "measured_lines": measured_lines,
     }
-    write_report(out, contributors, result, meta, section_png)
+    if model is None:
+        meta.update({
+            "type": config.get("type", "manual"),
+            "manual": True,
+            "sign": "Result = sum of direction x row (+1 adds, -1 subtracts)",
+            "step": "none - the rows were written by hand",
+            "chain": "the rows of the config, in the order written",
+        })
+    else:
+        meta.update({
+            "type": config.get("type", "step"),
+            "axis": axis,
+            "from": model.label(start),
+            "to": model.label(end),
+            "contact_tol": model.contact_tol,
+            "chain": options[choice - 1].describe(model.parts),
+            "alternatives": [o.describe(model.parts) for i, o in enumerate(options) if i != choice - 1],
+            "step": str(step),
+            "units": " + ".join(model.units) or "not declared",
+        })
+    write_report(out, contributors, result, meta, section_png, groups, limit, chart_png)
     if notes is not None:
         notes.extend(f"warning: {w}" for w in warnings)
         notes.extend(f"GD&T (not in the stack): {line}" for line in gdt_lines)
         notes.extend(f"general tolerance on the drawing: {line}" for line in general_lines)
+        notes.extend(measured_lines)
+        notes.extend(f"picture: {png}" for png in (chart_png, table_png) if png)
     return contributors, result, str(out)
