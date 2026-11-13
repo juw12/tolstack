@@ -28,6 +28,8 @@ versions follow [Semantic Versioning](https://semver.org/). Config files carry t
 ### Fixed
 - App: an uploaded STEP was rewritten on every rerun, which changed its time stamp and reloaded the
   model each time. Uploads are now written once.
+- Configs: a path written on Windows (`C:\...\part.pdf`) is now reduced to its file name on Linux
+  too, so a config saved on a PC also loads on a Linux server (and the other way round).
 
 ## [0.2.0] - 2026-11-12
 

@@ -81,6 +81,9 @@ def test_portable_config_runs_from_its_own_folder(tmp_path):
 
     resolved = resolve_drawing_map({**paths["drawing_map"], "PCB": "drawings/MISSING.pdf"}, drawings)
     assert resolved == {"SPACER": spacer, "BASE": ""}                    # unknown file -> automatic match again
+    # a config written on Windows must also resolve on a Linux server, and the other way round
+    assert resolve_drawing_map({"SPACER": r"C:\Work\drawings\SPACER.pdf"}, drawings) == {"SPACER": spacer}
+    assert resolve_drawing_map({"SPACER": "/srv/job/drawings/SPACER.pdf"}, drawings) == {"SPACER": spacer}
 
 
 # ---------------------------------------------------------------- sensitivity

@@ -3,7 +3,7 @@ from __future__ import annotations
 
 import glob
 from dataclasses import dataclass
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 from .cad import Part, PlanarFace, describe_face, load_step, planar_faces, step_length_units, unit_note
 from .chain import Contact, build_chain, find_contacts, find_paths
@@ -152,16 +152,21 @@ def gdt_contributor(hit: GdtHit, part: str, label: str) -> Contributor:
                        source=f"GD&T {Path(hit.pdf).name} p{hit.page + 1}: {hit.text}")
 
 
+def _file_name(path: str | Path) -> str:
+    """File name of a path written on any system: a config saved on Windows is also read on a Linux server."""
+    return PureWindowsPath(str(path)).name        # splits on both \ and /
+
+
 def portable_paths(step_path: str | Path, drawing_map: dict | None, drawings: list[str]) -> dict:
     """Config entries that do not depend on this computer: the STEP by file name, drawings in `drawings/`.
 
     Used when the files were uploaded (they live in a temporary folder): put the config next to the
     STEP, the PDFs in a `drawings` folder beside it, and `tolstack run` - or the app - finds them again.
     """
-    out: dict = {"step": Path(step_path).name}
+    out: dict = {"step": _file_name(step_path)}
     if drawings:
         out["drawings"] = ["drawings/*.pdf"]
-    out["drawing_map"] = {part: (f"drawings/{Path(pdf).name}" if pdf else "")
+    out["drawing_map"] = {part: (f"drawings/{_file_name(pdf)}" if pdf else "")
                           for part, pdf in (drawing_map or {}).items()}
     return out
 
@@ -171,13 +176,13 @@ def resolve_drawing_map(drawing_map: dict | None, drawings: list[str]) -> dict:
 
     Entries whose file is not among `drawings` are dropped, so the automatic name match takes over.
     """
-    by_name = {Path(d).name.lower(): d for d in drawings}
+    by_name = {_file_name(d).lower(): d for d in drawings}
     out = {}
     for part, pdf in (drawing_map or {}).items():
         if not pdf:
             out[part] = ""
-        elif Path(str(pdf)).name.lower() in by_name:
-            out[part] = by_name[Path(str(pdf)).name.lower()]
+        elif _file_name(pdf).lower() in by_name:
+            out[part] = by_name[_file_name(pdf).lower()]
     return out
 
 
