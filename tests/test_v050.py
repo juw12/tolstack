@@ -95,7 +95,7 @@ def test_scan_folder_finds_step_inside_archives_once(tmp_path):
 
 
 def test_sibling_2d_folder_is_found_next_to_the_3d_folder(tmp_path):
-    handover = tmp_path / "ZIRIS_handover"
+    handover = tmp_path / "PRODUCT_handover"
     three_d = handover / "16-latest 3D (Proe)"
     (three_d / "3D").mkdir(parents=True)
     (handover / "17-key dimensions-2D").mkdir()
@@ -131,17 +131,17 @@ def test_upload_limit_is_raised_for_large_step_files():
 
 
 def test_name_date_reads_the_date_styles_used_in_handover_files():
-    assert name_date("Ziris_system_all_40mm_spk_asm20260716.stp", 2025) == (2026, 7, 16)
-    assert name_date("aio-160_g_cam_all_asm_micX3_260909.stp", 2025) == (2026, 9, 9)
-    assert name_date("essential3_all_new_asm_0903.stp", 2025) == (2025, 9, 3)
+    assert name_date("producta_system_all_40mm_spk_asm20260716.stp", 2025) == (2026, 7, 16)
+    assert name_date("productb_g_cam_all_asm_micX3_260909.stp", 2025) == (2026, 9, 9)
+    assert name_date("productc3_all_new_asm_0903.stp", 2025) == (2025, 9, 3)
     assert name_date("motor_metal_cnc1.stp", 2025) is None
     assert name_date("part_40mm.stp", 2025) is None
 
 
 def test_newest_full_assembly_comes_first_not_just_the_largest(tmp_path):
-    older_big = tmp_path / "Ziris_system_all_asm20260716.stp"
+    older_big = tmp_path / "producta_system_all_asm20260716.stp"
     older_big.write_bytes(b"x" * 1000)
-    newer = tmp_path / "aio-160_g_system_all_asm20260805.stp"
+    newer = tmp_path / "productb_g_system_all_asm20260805.stp"
     newer.write_bytes(b"x" * 980)
     small_new = tmp_path / "bracket_20261001.stp"
     small_new.write_bytes(b"x" * 10)

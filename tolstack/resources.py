@@ -1,14 +1,14 @@
 """How much memory this server may use, and whether a STEP file of a given size fits in it.
 
-On a container (the AICC pod) the memory limit is the cgroup limit: going over it kills the app for every
+On a container (a Kubernetes pod) the memory limit is the cgroup limit: going over it kills the app for every
 user at once. So the app reads the limit, sizes the largest upload from it, and refuses a STEP file that
 would not fit before it starts reading it - with a message instead of a crash. On a PC there is no cgroup
 limit and nothing is refused.
 
 The estimate is measured, not guessed: reading a STEP file and finding its faces and contacts took
 (Windows, peak working set over the loaded app)
-    9.7 MB  Lory3 camera board assembly    ->  +95 MB
-    66.5 MB ZIRIS assembly                 -> +220 MB
+    9.7 MB  camera board assembly          ->  +95 MB
+    66.5 MB full product assembly          -> +220 MB
 so PEAK_PER_MB = 4.5 and PEAK_FIXED_MB = 60 cover both with room to spare, and an upload also sits in
 memory once while it is received.
 """

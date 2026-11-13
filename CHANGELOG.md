@@ -22,7 +22,7 @@ The stack written by hand gets the web app, and the locating fits it needs can b
 - The result metrics of the web app are drawn by one function for both modes.
 
 ### Fixed
-- **AICC deploys were blocked by the server security scan** (ERROR `dangerous-subprocess-use-audit` on the Creo
+- **Hosted deploys were blocked by the server security scan** (ERROR `dangerous-subprocess-use-audit` on the Creo
   launch in `tolstack/creo.py`). The call is audited and marked `# nosemgrep`: no shell, fixed arguments, and only an
   executable named `parametric*` (found under `PTC\Creo*` or set in `TOLSTACK_CREO`) is started. Creo must still be
   started by its full path - with a bare `parametric` as argv[0] it exits at once without a log.
@@ -71,8 +71,8 @@ after the stack-up: where the measured parts sit, and which result still works.
   as such, with who to ask, instead of "no STEP".
 - **Creo release check**: Creo can not open files saved by a newer Creo. Each file's release is read from its header
   and compared with the installed Creo; a newer file is refused up front with a clear message (instead of a silent
-  failed export). In the hand-over folders 1,437 assemblies were checked: 651 Creo 5.0, 431 Creo 2.0, 355
-  Pro/ENGINEER Wildfire 5.0 - so the Creo 2.0 on this PC can convert only the older ~55 %.
+  failed export). In a set of real hand-over folders the assemblies were a mix of Creo 5.0, Creo 2.0 and
+  Pro/ENGINEER Wildfire 5.0 - so an older installed Creo can convert only part of them.
 - **Memory guard for the server** (`tolstack/resources.py`): the container memory limit is read from the cgroup;
   a STEP file that would not fit is refused with a message before it is read (instead of the pod being killed for
   every user), and the largest upload is sized from the limit (about 110 MB of STEP in a 1 GiB pod, 2 GB on a PC).
@@ -90,8 +90,8 @@ after the stack-up: where the measured parts sit, and which result still works.
 
 ## [0.5.0] - 2026-11-13
 
-Tuned on 44 real project hand-over folders ("16 交接時的最新版本3D圖面"): 19,327 files, of which 66 loose STEP
-files (largest 549 MB), 61 zip / 7z archives (54 of them hold a STEP), 1,488 Creo assemblies and 15,991 Creo parts.
+Tuned on a set of real project hand-over folders: loose STEP files (largest about 550 MB), zip / 7z archives
+(most of them hold a STEP) and native Creo assemblies and parts.
 
 ### Added
 - **Uploads up to 2 GB per file** (was Streamlit's 200 MB). Large uploads are written to disk in 1 MB chunks
@@ -104,17 +104,16 @@ files (largest 549 MB), 61 zip / 7z archives (54 of them hold a STEP), 1,488 Cre
   date in its name (20260805, 260909 or 0903) is the default; the list shows size and folder of each file.
 - **Native Creo / Pro-E files** (`.prt.12`, `.asm.3`, `.drw`) are recognised and counted, with the export-to-STEP
   steps, instead of a bare "no STEP file".
-- **The 2D folder next to the 3D folder** (`17 ... -2D` beside `16 ... 3D`, found in 41 of the 44 hand-overs) is
+- **The 2D folder next to the 3D folder** (`17 ... -2D` beside `16 ... 3D`, found in almost every hand-over) is
   used for the drawings when no drawings folder is given.
 
 - **The STEP file is read once per file**: a new stack-up axis or contact tolerance reuses the parts already
   read (before, every change read the whole file again - minutes for a hand-over assembly).
 
 ### Checked on real data
-- ZIRIS hand-over STEP `Ziris_system_all_40mm_spk_asm20260716.stp` (66.5 MB, mm): 504 parts, 5,848 faces normal
-  to Z, peak memory 436 MB. Folder scan of the ZIRIS, Lory3, NS300 and PD160 hand-overs: the STEP inside their
-  7z / zip files is found, repeats dropped, the 2D folder paired (72, 100, 15, 15 PDFs), the Creo-only PD160
-  folder explained (3,982 parts, 482 assemblies).
+- A 66.5 MB hand-over assembly STEP (mm): 504 parts, 5,848 faces normal to Z, peak memory 436 MB. Folder scan of
+  four product hand-overs: the STEP inside their 7z / zip files is found, repeats dropped, the 2D folder paired,
+  and a Creo-only folder explained.
 
 ### Changed
 - `py7zr` is a new dependency.
