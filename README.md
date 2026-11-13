@@ -84,8 +84,8 @@ streamlit run app.py
    **Native Creo / Pro-E files** (`.prt.N`, `.asm.N`): on a PC with Creo Parametric installed, the folder's
    assemblies are listed and **Convert with Creo** has Creo save the chosen one as STEP in the background
    (files are copied to a private folder first; yours is not changed). Set `TOLSTACK_CREO` to `parametric.exe`
-   if Creo is not under `PTC\Creo *`. Creo needs a working license; a refusal by the license server is shown
-   as such. tolstack does not decode Creo files itself - their geometry format is PTC's own.
+   if Creo is not under `PTC\Creo *`. Creo needs a working license (a refusal by the license server is shown
+   as such) and can not open files saved by a newer Creo (each file's release is checked first). tolstack does not decode Creo files itself - their geometry format is PTC's own.
    A saved YAML config can be loaded at the top of the sidebar to restore an analysis.
 2. Choose **Step** or **Gap**, then the *From* part + face and the *To* part + face; set LSL/USL (optional).
    The **3D view** next to the lists highlights the picked parts and faces and follows every change (toggle it off

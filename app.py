@@ -150,7 +150,12 @@ def creo_panel(native_paths: list[Path], key: str) -> list[str]:
                             format_func=lambda a: a.label,
                             help="Most likely top assembly first (its name says all / top / main, or it holds the "
                                  "most sub-assemblies) - check it is the one you need.")
-        if st.button("Convert with Creo (STEP)", key=f"creo_go_{key}",
+        newer = creo.too_new([pick.file], CREO_EXE)
+        if newer:
+            st.warning(f"{pick.file.model} was saved in {newer[0][1]}; the {creo.installed_release(CREO_EXE)} "
+                       "installed here can not open files from a newer Creo. Convert it on a PC with that release "
+                       "or newer, or ask for a STEP export.")
+        if st.button("Convert with Creo (STEP)", key=f"creo_go_{key}", disabled=bool(newer),
                      help=f"Runs {CREO_EXE} in the background (no window). The newest version of every file is "
                           "copied to a private folder first; your folder is not changed. A large assembly takes "
                           "minutes."):

@@ -137,8 +137,13 @@ def summary(paths: Iterable[str | Path]) -> str | None:
         counts[f.kind] = counts.get(f.kind, 0) + 1
     names = {"prt": "parts", "asm": "assemblies", "drw": "drawings"}
     text = ", ".join(f"{n} {names[k]}" for k, n in sorted(counts.items(), key=lambda kv: -kv[1]))
-    release = read_header(files[0].path).get("release")
-    return f"{text} ({release})" if release else text
+    releases: dict[str, int] = {}
+    for f in files[:400]:                                   # enough to show the mix without reading every file
+        release = read_header(f.path).get("release", "unknown release")
+        releases[release] = releases.get(release, 0) + 1
+    mix = ", ".join(f"{r} x{n}" if len(releases) > 1 else r
+                    for r, n in sorted(releases.items(), key=lambda kv: -kv[1]))
+    return f"{text} ({mix})" if mix else text
 
 
 def needed_files(assembly: CreoFile, files: Iterable[CreoFile]) -> list[CreoFile]:
@@ -156,6 +161,40 @@ def needed_files(assembly: CreoFile, files: Iterable[CreoFile]) -> list[CreoFile
             wanted.add(stem)
             queue.append(newest[stem])
     return sorted((newest[s] for s in wanted), key=lambda f: f.model)
+
+
+def release_rank(release: str | None) -> float | None:
+    """A number that orders releases: Pro/ENGINEER Wildfire 5.0 < Creo 2.0 < Creo 5.0. None if unknown."""
+    match = re.search(r"(Creo|Pro/ENGINEER|Wildfire)\s*([0-9]+(?:\.[0-9]+)?)", release or "", re.IGNORECASE)
+    if not match:
+        return None
+    number = float(match.group(2))
+    return 10 + number if match.group(1).lower() == "creo" else number / 100
+
+
+def installed_release(creo_exe: str | Path | None) -> str | None:
+    """'Creo 2.0' for D:/PTC/Creo 2.0/Parametric/bin/parametric.exe; None when the path does not say."""
+    if creo_exe is None:
+        return None
+    for part in reversed(Path(creo_exe).parts):
+        match = re.match(r"Creo\s*([0-9]+(?:\.[0-9]+)?)", part, re.IGNORECASE)
+        if match:
+            return f"Creo {match.group(1)}"
+    return None
+
+
+def too_new(files: Iterable[CreoFile], creo_exe: str | Path | None) -> list[tuple[CreoFile, str]]:
+    """The files saved by a newer Creo than the installed one (Creo can not open files from a newer release)."""
+    have = release_rank(installed_release(creo_exe))
+    if have is None:
+        return []
+    newer = []
+    for item in files:
+        release = read_header(item.path).get("release")
+        rank = release_rank(release)
+        if rank is not None and rank > have + 1e-9:
+            newer.append((item, release or ""))
+    return newer
 
 
 # ------------------------------------------------------------------ export with the installed Creo
@@ -236,6 +275,13 @@ def export_step(assembly: CreoFile, files: Iterable[CreoFile], out_dir: str | Pa
         raise CreoError("Creo Parametric was not found on this computer. Install it, or set TOLSTACK_CREO to "
                         "the full path of parametric.exe; or export the assembly as STEP in Creo yourself.")
     newest = needed_files(assembly, files)
+    newer = too_new(newest, creo_exe)
+    if newer:
+        first, release = newer[0]
+        raise CreoError(f"{len(newer)} of the {len(newest)} files this assembly needs (for example {first.path.name}) were "
+                        f"saved in {release}; the {installed_release(creo_exe)} on this computer can not open files "
+                        "from a newer Creo. Convert them on a PC with that Creo release or newer, or ask the owner "
+                        "for a STEP export.")
     stamp = max(int(f.path.stat().st_mtime) for f in newest)
     job = Path(out_dir) / f"{_ascii(assembly.stem)[:60]}_{len(newest)}_{stamp}"
     out_name = _ascii(assembly.stem)[:60] or "assembly"

@@ -15,11 +15,19 @@ versions follow [Semantic Versioning](https://semver.org/). Config files carry t
   `C:/D:/E:\PTC\Creo *` and `Program Files\PTC`, or set `TOLSTACK_CREO`.
 - A Creo license refusal (user / host on the license server's EXCLUDE list, or not on its INCLUDE list) is shown
   as such, with who to ask, instead of "no STEP".
+- **Creo release check**: Creo can not open files saved by a newer Creo. Each file's release is read from its header
+  and compared with the installed Creo; a newer file is refused up front with a clear message (instead of a silent
+  failed export). In the hand-over folders 1,437 assemblies were checked: 651 Creo 5.0, 431 Creo 2.0, 355
+  Pro/ENGINEER Wildfire 5.0 - so the Creo 2.0 on this PC can convert only the older ~55 %.
 - **Memory guard for the server** (`tolstack/resources.py`): the container memory limit is read from the cgroup;
   a STEP file that would not fit is refused with a message before it is read (instead of the pod being killed for
   every user), and the largest upload is sized from the limit (about 110 MB of STEP in a 1 GiB pod, 2 GB on a PC).
   Measured: a 9.7 MB assembly needs +95 MB, a 66.5 MB one +220 MB while it is read.
 - At most 2 STEP files and 3 models stay cached in memory at once.
+
+### Fixed
+- The "2D folder next to the 3D folder" match no longer takes any folder whose name merely contains "2d" (for
+  example a hash like `a2d4f`); "2D" must stand on its own (`17-...2D圖面`, `AX_2D`).
 
 ### Not done (on purpose)
 - Creo files are not decoded directly. Their geometry is PTC's own compressed binary format; a guessed surface or

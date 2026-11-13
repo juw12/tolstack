@@ -155,3 +155,20 @@ def test_cgroup_files_are_read(tmp_path: Path, monkeypatch) -> None:
     v2.write_text("max\n")
     monkeypatch.setattr(resources, "_V1_LIMIT", tmp_path / "absent")
     assert resources.memory_limit_bytes() is None
+
+
+def test_newer_creo_files_are_refused_before_creo_runs(handover: Path, tmp_path: Path, monkeypatch) -> None:
+    assert creo.release_rank("Creo 5.0") > creo.release_rank("Creo 2.0") > creo.release_rank("Pro/ENGINEER 5.0")
+    exe = tmp_path / "PTC" / "Creo 2.0" / "Parametric" / "bin" / "parametric.exe"
+    exe.parent.mkdir(parents=True)
+    exe.write_text("")
+    assert creo.installed_release(exe) == "Creo 2.0"
+    newer = handover / "cover.prt.4"
+    newer.write_bytes(newer.read_bytes().replace(b"Creo  TM  2.0", b"Creo  TM  5.0"))
+    files = creo.latest_versions(handover.iterdir())
+    assert [f.path.name for f, _ in creo.too_new(files, exe)] == ["cover.prt.4"]
+    monkeypatch.setattr(creo.subprocess, "run", lambda *a, **k: pytest.fail("Creo must not start"))
+    top = creo.assemblies(files)[0]
+    with pytest.raises(creo.CreoError, match="Creo 5.0"):
+        creo.export_step(top.file, files, tmp_path / "jobs", creo=exe)
+    assert "Creo 5.0 x1" in (creo.summary(handover.iterdir()) or "")

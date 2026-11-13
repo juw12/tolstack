@@ -22,8 +22,8 @@ MAX_UNZIPPED = 4 * 1024 ** 3          # bytes written from one archive; a "zip b
 _CHUNK = 1 << 20
 _VERSION = re.compile(r"\.\d+$")      # Creo / Pro-E keep versions as name.prt.12
 _NATIVE = {".prt": "parts", ".asm": "assemblies", ".drw": "drawings"}
-_TWO_D = re.compile(r"2d", re.IGNORECASE)
-_THREE_D = re.compile(r"3d", re.IGNORECASE)
+_TWO_D = re.compile(r"(?<![a-z0-9])2d(?![a-z0-9])", re.IGNORECASE)     # "17-2D圖面", "AX_2D"; not "a2d4f" in a hash
+_THREE_D = re.compile(r"(?<![a-z0-9])3d(?![a-z0-9])", re.IGNORECASE)
 
 Upload = tuple[str, Union[Callable[[], bytes], IO[bytes]]]
 
