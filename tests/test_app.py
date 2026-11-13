@@ -116,3 +116,110 @@ def test_app_warns_when_the_step_is_not_in_mm(tmp_path):
     assert any("not mm" in w.value for w in at.warning)
     _build_demo_chain(at)
     assert {m.label: m.value for m in at.metric}["Nominal"] == "+1.600"      # still read in mm
+
+
+# ---------------------------------------------------------------- v0.4.0: 3-D view, folder / zip, drawing note
+
+
+def _demo_zip(folder, name="demo_set.zip"):
+    """The demo assembly and its drawings as one zip, the way a user would hand a project over."""
+    import zipfile
+
+    from tolstack.demo import write_demo
+
+    source = folder / "source"
+    write_demo(source)
+    archive = folder / name
+    with zipfile.ZipFile(archive, "w") as bundle:
+        for path in sorted(p for p in source.rglob("*") if p.is_file()):
+            bundle.write(path, f"project/{path.relative_to(source).as_posix()}")
+    return archive, source
+
+
+def _nominal(at):
+    return {m.label: m.value for m in at.metric}["Nominal"]
+
+
+def test_app_3d_view_follows_the_picked_faces_and_can_be_switched_off():
+    at = _app()
+    at.run()
+    at.sidebar.radio[0].set_value("Demo assembly").run()
+    at.selectbox(key="From (reference)_part").set_value("[4] POST").run()
+    at.selectbox(key="To_part").set_value("[3] CAP_TOP").run()
+    assert not at.exception
+    assert at.toggle(key="show_3d").value is True
+    assert len(at.get("plotly_chart")) == 1
+    at.radio(key="view_show").set_value("Whole assembly").run()
+    assert not at.exception and len(at.get("plotly_chart")) == 1
+    at.toggle(key="show_3d").set_value(False).run()
+    assert not at.exception
+    assert len(at.get("plotly_chart")) == 0
+    assert at.selectbox(key="To_part").value == "[3] CAP_TOP"          # the pickers stay as they were
+    at.toggle(key="show_3d").set_value(True).run()
+    assert not at.exception and len(at.get("plotly_chart")) == 1
+    assert at.radio(key="view_show").value == "Whole assembly"         # ... and so does the view choice
+    at.toggle(key="show_3d").set_value(False).run()
+    _build_demo_chain(at)
+    assert _nominal(at) == "+1.600"
+
+
+def test_app_path_mode_takes_a_folder_or_a_zip(tmp_path):
+    archive, source = _demo_zip(tmp_path)
+    for handed_over in (source, archive):
+        at = _build_demo_chain(_open_path_mode(_app(), handed_over))
+        assert _nominal(at) == "+1.600"
+        spacer = [row for row in at.session_state["chain"] if row["part"] == "SPACER"][0]
+        assert (spacer["tol_plus"], "SPACER.pdf" in spacer["source"]) == (0.08, True)   # drawings found with the STEP
+    empty = tmp_path / "empty"
+    empty.mkdir()
+    at = _open_path_mode(_app(), empty)
+    assert any("No STEP file in this folder" in e.value for e in at.error)
+
+
+def test_app_upload_takes_loose_files_or_one_zip(tmp_path):
+    archive, source = _demo_zip(tmp_path)
+    loose = [(path.name, path.read_bytes(), "application/octet-stream")
+             for path in sorted(p for p in source.rglob("*") if p.is_file())]
+    packed = [(archive.name, archive.read_bytes(), "application/zip")]
+    for uploaded in (loose, packed):
+        at = _app()
+        at.run()
+        assert at.sidebar.radio[0].value == "Upload files"
+        at.sidebar.file_uploader[1].set_value(uploaded).run()           # [0] loads a config, [2] takes a folder
+        assert not at.exception and not at.error
+        _build_demo_chain(at)
+        assert _nominal(at) == "+1.600"
+        base = [row for row in at.session_state["chain"] if row["part"] == "BASE"][0]
+        assert "general tol from BASE.pdf (size table)" in base["source"]
+
+    at = _app()
+    at.run()
+    at.sidebar.file_uploader[1].set_value([("broken.zip", b"not a zip", "application/zip")]).run()
+    assert not at.exception
+    assert any(e.value.startswith("broken.zip: ") for e in at.error)
+
+
+def test_app_general_tolerance_follows_the_drawing_until_switched_off(tmp_path):
+    import fitz
+
+    from tolstack.demo import write_demo
+
+    step = write_demo(tmp_path)
+    doc = fitz.open()                                   # BASE drawing: no dimension tolerances, a single-value note
+    page = doc.new_page(width=842, height=595)
+    page.insert_text((300, 200), "5.00", fontsize=12)
+    page.insert_text((560, 520), "UNLESS OTHERWISE SPECIFIED ±0.3", fontsize=8)
+    doc.save(str(tmp_path / "drawings" / "BASE.pdf"))
+
+    at = _build_demo_chain(_open_path_mode(_app(), step, tmp_path / "drawings"))
+    base = [row for row in at.session_state["chain"] if row["part"] == "BASE"]
+    assert base and all(row["tol_plus"] == 0.3 and "(single value) ±0.3" in row["source"] for row in base)
+    assert at.session_state["general_notes"]["BASE"].kind == "single value"
+    followed = {m.label: m.value for m in at.metric}["Worst case"]
+
+    at.sidebar.checkbox(key="follow_drawing").uncheck().run()
+    assert not at.exception
+    base = [row for row in at.session_state["chain"] if row["part"] == "BASE"]
+    assert base and all(row["tol_plus"] < 0.3 and "single value" not in row["source"] for row in base)
+    assert {m.label: m.value for m in at.metric}["Worst case"] != followed
+    assert _nominal(at) == "+1.600"

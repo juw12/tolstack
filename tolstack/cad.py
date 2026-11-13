@@ -44,6 +44,7 @@ class Part:
     path: str
     bbox: tuple  # (xmin, ymin, zmin, xmax, ymax, zmax)
     shape: TopoDS_Shape = field(repr=False)
+    mesh: tuple | None = field(default=None, repr=False, compare=False)     # display triangles, see view3d
 
 
 @dataclass

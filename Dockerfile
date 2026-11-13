@@ -16,6 +16,7 @@ COPY pyproject.toml README.md ./
 COPY tolstack ./tolstack
 RUN pip install --no-cache-dir ".[app]"
 COPY app.py ./
+COPY .streamlit ./.streamlit
 
 ENV PYTHONDONTWRITEBYTECODE=1 \
     PYTHONUNBUFFERED=1 \

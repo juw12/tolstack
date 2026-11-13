@@ -12,9 +12,11 @@ from .tolerances import (
     DEFAULT_GENERAL_TABLE,
     DimensionHit,
     GdtHit,
+    GeneralNote,
     crop_hit,
     find_dimension,
     find_gdt,
+    find_general_note,
     general_tolerance,
     match_pdf,
     pdf_has_text,
@@ -25,6 +27,7 @@ CONFIG_KEYS = {
     "version", "title", "project", "name", "type", "author", "step", "axis", "from", "to",
     "exclude", "spec", "drawings", "drawing_map", "general_tolerance", "extra", "overrides",
     "section", "output", "contact_tol", "chain_option", "sigma_level", "mc_samples", "ocr",
+    "general_from_drawing",
 }
 
 
@@ -86,14 +89,21 @@ def apply_tolerances(contributors: list[Contributor], drawings: list[str] | None
                      table=DEFAULT_GENERAL_TABLE, ref_dir: str | Path | None = None,
                      window: float = 0.03, drawing_map: dict | None = None, choices: dict | None = None,
                      candidates_out: dict | None = None, ocr: bool = False,
-                     gdt_out: dict | None = None) -> list[Contributor]:
-    """Fill tolerances: 2D dimension with tolerance if found, else the general table.
+                     gdt_out: dict | None = None, follow_drawing: bool = True,
+                     general_out: dict | None = None) -> list[Contributor]:
+    """Fill tolerances: 2D dimension with tolerance if found, else the general tolerance.
+
+    The general tolerance is the one written on the part's own drawing ("TOLERANCES UNLESS
+    SPECIFIED ...", ISO 2768-m, X.XX ±0.05); `table` is used when the drawing has no such note,
+    when the note does not cover the size, or when `follow_drawing` is False.
 
     drawing_map    {part name: pdf path} overrides the automatic file-name match ("" = no drawing)
     choices        {label: candidate index} picks another 2D hit than the best ranked one
     candidates_out filled with {label: [DimensionHit, ...]} so a UI can show the alternatives
     gdt_out        filled with {part name: [GdtHit, ...]} - GD&T callouts on the drawings of the chain
                    parts. They are reported only; see `gdt_contributor` to add one as a row.
+    general_out    filled with {part name: GeneralNote or None} - the general-tolerance note read
+                   from the drawing of each chain part that has one
     The source column always says where the tolerance came from; when the 3D nominal differs
     from the drawing nominal, the drawing limits are kept and the difference is noted.
     """
@@ -101,10 +111,18 @@ def apply_tolerances(contributors: list[Contributor], drawings: list[str] | None
     drawing_map = drawing_map or {}
     choices = choices or {}
     text_cache: dict[str, bool] = {}
+    note_cache: dict[str, GeneralNote | None] = {}
     for c in contributors:
         pdf = drawing_map[c.part] if c.part in drawing_map else match_pdf(c.part, list(drawings))
         if gdt_out is not None and pdf and c.part not in gdt_out and not is_extra(c):
             gdt_out[c.part] = find_gdt(pdf, ocr=ocr)
+        general = None
+        if pdf and follow_drawing and not is_extra(c):
+            if pdf not in note_cache:
+                note_cache[pdf] = find_general_note(pdf, ocr=ocr)
+            general = note_cache[pdf]
+            if general_out is not None:
+                general_out.setdefault(c.part, general)
         if c.tol_plus or c.tol_minus:
             continue  # already set by the user
         pdf_name = Path(pdf).name if pdf else ""
@@ -128,7 +146,8 @@ def apply_tolerances(contributors: list[Contributor], drawings: list[str] | None
                 note = f" (3D {c.nominal:g} vs 2D {hit.value:g}: drawing limits kept)"
             c.source = f"2D {pdf_name} p{hit.page + 1}: {hit.text}{note}{count}"
         else:
-            t = general_tolerance(c.nominal, table)
+            from_note = general.tolerance(c.nominal, hit.text if hit is not None else None) if general else None
+            t = general_tolerance(c.nominal, table) if from_note is None else from_note
             c.tol_plus = c.tol_minus = t
             if hit is not None:
                 where = f"2D {pdf_name}: {hit.text} (no tol){count} -> "
@@ -138,7 +157,12 @@ def apply_tolerances(contributors: list[Contributor], drawings: list[str] | None
                 where = f"2D {Path(pdf).name}: not dimensioned -> "
             else:
                 where = "no 2D -> "
-            c.source = f"{where}general tol ±{t}"
+            if from_note is not None and general is not None:
+                c.source = f"{where}general tol from {pdf_name} ({general.kind}) ±{t}"
+            elif general is not None:
+                c.source = f"{where}general tol ±{t} (app table: drawing note does not cover this size)"
+            else:
+                c.source = f"{where}general tol ±{t}"
         if hit is not None and ref_dir:
             Path(ref_dir).mkdir(parents=True, exist_ok=True)
             c.ref_image = crop_hit(hit, Path(ref_dir) / f"ref_{c.label}.png")
@@ -214,8 +238,8 @@ def expand_drawings(patterns: list[str] | None, base: Path) -> list[str]:
         p = Path(pattern)
         if not p.is_absolute():
             p = base / p
-        out.extend(sorted(glob.glob(str(p))))
-    return out
+        out.extend(sorted(glob.glob(str(p), recursive=True)))      # "drawings/**/*.pdf" = at any depth
+    return list(dict.fromkeys(out))                                 # "*.pdf" and "**/*.pdf" overlap
 
 
 def run_config(config: dict, base: str | Path = ".",
@@ -265,9 +289,12 @@ def run_config(config: dict, base: str | Path = ".",
     for part, pdf in (config.get("drawing_map") or {}).items():
         drawing_map[part] = "" if not pdf else str(pdf if Path(pdf).is_absolute() else base / pdf)
     gdt: dict[str, list[GdtHit]] = {}
+    general: dict[str, GeneralNote | None] = {}
     apply_tolerances(contributors, drawings, table, out.parent / f"{out.stem}_refs",
-                     drawing_map=drawing_map, ocr=bool(config.get("ocr", False)), gdt_out=gdt)
+                     drawing_map=drawing_map, ocr=bool(config.get("ocr", False)), gdt_out=gdt,
+                     follow_drawing=bool(config.get("general_from_drawing", True)), general_out=general)
     gdt_lines = [f"{part}: {hit.label()}" for part, hits in gdt.items() for hit in hits]
+    general_lines = [f"{part}: {note.label()}" for part, note in general.items() if note is not None]
 
     spec = config.get("spec", {})
     sigma_level = float(config.get("sigma_level", 3.0))
@@ -311,9 +338,11 @@ def run_config(config: dict, base: str | Path = ".",
         "step": str(step),
         "units": " + ".join(model.units) or "not declared",
         "gdt": gdt_lines,
+        "general_notes": general_lines,
     }
     write_report(out, contributors, result, meta, section_png)
     if notes is not None:
         notes.extend(f"warning: {w}" for w in warnings)
         notes.extend(f"GD&T (not in the stack): {line}" for line in gdt_lines)
+        notes.extend(f"general tolerance on the drawing: {line}" for line in general_lines)
     return contributors, result, str(out)

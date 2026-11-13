@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tolstack"
-version = "0.3.0"
+version = "0.4.0"
 description = "1-D tolerance stack-up (gap / step) from a STEP assembly and 2D drawings, exported to Excel"
 readme = "README.md"
 license = {text = "MIT"}
@@ -20,7 +20,7 @@ dependencies = [
 ]
 
 [project.optional-dependencies]
-app = ["streamlit>=1.35", "pandas>=2.0"]
+app = ["streamlit>=1.49", "pandas>=2.0", "plotly>=5.20"]
 dev = ["pytest", "ruff", "mypy"]
 
 [project.urls]
@@ -46,5 +46,5 @@ files = ["tolstack"]
 warn_unused_ignores = true
 
 [[tool.mypy.overrides]]
-module = ["OCP.*", "fitz.*", "shapely.*", "openpyxl.*", "yaml.*", "streamlit.*", "pandas.*", "matplotlib.*", "PIL.*"]
+module = ["OCP.*", "fitz.*", "shapely.*", "openpyxl.*", "yaml.*", "streamlit.*", "pandas.*", "matplotlib.*", "PIL.*", "plotly.*"]
 ignore_missing_imports = true

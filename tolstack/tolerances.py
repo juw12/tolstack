@@ -12,6 +12,13 @@ tolerance value, a diameter zone, a material modifier and up to three datums, e.
     ⏥ 0.05      ⌖ ⌀0.1 Ⓜ A B      FLATNESS 0.05      平面度 0.05      ∥ 0.05 A
 They are reported, not applied: a 1-D stack cannot decide by itself which callout acts along
 the axis, so the user adds the ones that matter as rows (zone t -> ± t/2).
+
+The general-tolerance note of a drawing is read as well (`find_general_note`), so a dimension
+without a tolerance of its own gets the tolerance its drawing asks for:
+    0~10 ±0.05  >10~50 ±0.10  >50 ±0.15      size table (also "OVER 30 UP TO 120 ±0.3")
+    ISO 2768-m   JIS B 0405-m   GB/T 1804-m   a class of the standard (f, m, c, v)
+    X.X ±0.1  X.XX ±0.05                      by the decimal places the dimension is written with
+    UNLESS OTHERWISE SPECIFIED ±0.1           one value for every size
 """
 from __future__ import annotations
 
@@ -249,6 +256,231 @@ def find_gdt(pdf_path: str | Path, ocr: bool = False) -> list[GdtHit]:
     return hits
 
 
+# ---------------------------------------------------------------- general-tolerance note on the drawing
+# ISO 2768-1 table 1, linear sizes (JIS B 0405 and GB/T 1804 have the same classes): ± per size step, in mm.
+# A step reads "over lo up to and including hi"; None = the standard gives no value there.
+ISO_2768_STEPS = (0.5, 3.0, 6.0, 30.0, 120.0, 400.0, 1000.0, 2000.0, 4000.0)
+ISO_2768 = {
+    "f": (0.05, 0.05, 0.1, 0.15, 0.2, 0.3, 0.5, None),
+    "m": (0.1, 0.1, 0.2, 0.3, 0.5, 0.8, 1.2, 2.0),
+    "c": (0.2, 0.3, 0.5, 0.8, 1.2, 2.0, 3.0, 4.0),
+    "v": (None, 0.5, 1.0, 1.5, 2.5, 4.0, 6.0, 8.0),
+}
+_ISO_WORDS = {"fine": "f", "medium": "m", "very coarse": "v", "coarse": "c",
+              "精密": "f", "精級": "f", "精级": "f", "中等": "m", "中級": "m", "中级": "m",
+              "最粗": "v", "極粗": "v", "极粗": "v", "粗糙": "c", "粗級": "c", "粗级": "c"}
+ISO_CLASS = re.compile(
+    r"(ISO\s*2768|JIS\s*B\s*0405|GB\s*/?\s*T\s*1804)(?:\s*-\s*1(?![\d.])|\s*T\s*1(?![\d.]))?"
+    r"\s*[-–:,]?\s*(?:class\s*)?"
+    r"(?:(" + "|".join(sorted(_ISO_WORDS, key=len, reverse=True)) + r")|([fmcv])[HKL]?(?![A-Za-z]))",
+    re.IGNORECASE,
+)
+
+NOTE_ANCHOR = re.compile(r"(?i)toleranc|unless\s+otherwise|未注|公差")
+NOTE_BELOW, NOTE_LEFT, NOTE_RIGHT = 150.0, 150.0, 320.0      # the note block around its heading, in points
+_TOL = r"±\s*(\d*\.?\d+)(?![\d.])(?!\s*°)"                  # not an angle: "±0.5°" is skipped
+_SIZE = r"(\d+(?:\.\d+)?)\s*(?:mm)?"
+_OVER = r"(?:>|≥|over|above|大于|大於|超过|超過)"
+_UPTO = r"(?:≤|<|up\s*to|to|below|under|至|以下)"
+NOTE_RANGE = re.compile(rf"{_OVER}?\s*(?<![\d.]){_SIZE}\s*(?:~|-|–|—|{_UPTO})\s*(?:≤|<)?\s*{_SIZE}\s*[:=]?\s*{_TOL}",
+                        re.IGNORECASE)
+NOTE_OVER = re.compile(rf"{_OVER}\s*{_SIZE}\s*[:=]?\s*{_TOL}", re.IGNORECASE)
+NOTE_UPTO = re.compile(rf"{_UPTO}\s*{_SIZE}\s*[:=]?\s*{_TOL}", re.IGNORECASE)
+NOTE_PLACES = re.compile(rf"(?<![\w.])(?:X+\.(X+)|\.(X+)|X+)(?![\w.])\s*(?:mm)?\s*[:=]?\s*{_TOL}", re.IGNORECASE)
+NOTE_ZEROS = re.compile(rf"(?<![\w.])(?:0?\.(0+)|0)(?![\w.])\s*(?:mm)?\s*[:=]?\s*{_TOL}")
+_NOTE_VALUE = re.compile(_TOL)
+EVERY_SIZE = 1e9
+
+
+@dataclass
+class GeneralNote:
+    """The general tolerance a drawing asks for where a dimension has no tolerance of its own."""
+    pdf: str
+    page: int
+    kind: str                  # "size table" | "single value" | "ISO 2768-m" | "decimal places"
+    table: list                # [(min size, max size, ± tolerance)], smallest sizes first
+    decimals: dict             # {decimal places the dimension is written with: ± tolerance}
+    text: str                  # the note as read from the drawing
+
+    def tolerance(self, nominal: float, written: str | None = None) -> float | None:
+        """± tolerance for a size, or None when the note does not cover it.
+
+        `written` is the dimension as it stands on the drawing ("30.00"); a decimal-places rule
+        needs it, so that rule can not be used for a dimension the drawing does not show.
+        """
+        for lo, hi, tol in self.table:
+            if lo <= abs(nominal) <= hi:
+                return tol
+        if written is not None and self.decimals:
+            return self.decimals.get(len(written.partition(".")[2]))
+        return None
+
+    def label(self) -> str:
+        where = f"{Path(self.pdf).name} p{self.page + 1}"
+        if self.kind in ("size table", "single value"):
+            detail = ", ".join(f">{lo:g} ±{tol:g}" if hi >= EVERY_SIZE and lo else
+                               (f"±{tol:g}" if hi >= EVERY_SIZE else f"{lo:g}-{hi:g} ±{tol:g}")
+                               for lo, hi, tol in self.table)
+        elif self.kind == "decimal places":
+            detail = ", ".join(f"{'X.' + 'X' * places if places else 'X'} ±{tol:g}"
+                               for places, tol in sorted(self.decimals.items()))
+        else:
+            detail = ""
+        return f"{self.kind}{': ' + detail if detail else ''}  ({where})"
+
+
+@dataclass
+class _PageNote:
+    table: list
+    decimals: dict
+    single: float | None
+    standard: str              # "ISO 2768-m" or ""
+    rows: set                  # indices of the text lines that are rows of the note, not dimensions
+    text: str
+
+    @property
+    def rank(self) -> int:
+        """Lower = more explicit; 9 = this page has no note."""
+        if self.table:
+            return 0
+        if self.single is not None:
+            return 1
+        if self.standard:
+            return 2
+        return 3 if self.decimals else 9
+
+
+def _note_entries(text: str) -> tuple[list[tuple[float, float, float]], dict[int, float], str]:
+    """Size rows and decimal-place rows written in one line of a note, and the text left over."""
+    sizes: list[tuple[float, float, float]] = []
+    decimals: dict[int, float] = {}
+    for pattern, kind in ((NOTE_RANGE, "range"), (NOTE_OVER, "over"), (NOTE_UPTO, "up to"),
+                          (NOTE_PLACES, "places"), (NOTE_ZEROS, "places")):
+        for m in pattern.finditer(text):
+            *before, tol = m.groups()
+            if kind == "range":
+                if float(before[0]) < float(before[1]):
+                    sizes.append((float(before[0]), float(before[1]), float(tol)))
+            elif kind == "over":
+                sizes.append((float(before[0]), EVERY_SIZE, float(tol)))
+            elif kind == "up to":
+                sizes.append((0.0, float(before[0]), float(tol)))
+            else:
+                decimals.setdefault(len(next((g for g in before if g), "")), float(tol))
+        text = pattern.sub(lambda m: " " * len(m.group(0)), text)
+    return sizes, decimals, text
+
+
+def _page_note(lines: list[tuple[str, tuple]]) -> _PageNote:
+    """Read the general-tolerance note from the text lines of one page.
+
+    A standard class (ISO 2768-m) counts anywhere on the page. Size rows and decimal-place rows
+    count only in the note block: the heading line ("TOLERANCES UNLESS OTHERWISE SPECIFIED",
+    "未注公差") and the lines just below and beside it. Lines on one height are joined left to
+    right first, because a table is often exported cell by cell.
+    """
+    standard, standard_text = "", ""
+    for text, _ in lines:
+        m = ISO_CLASS.search(text)
+        if m:
+            name = m.group(1).upper()
+            name = "JIS B 0405" if "JIS" in name else ("GB/T 1804" if "GB" in name else "ISO 2768")
+            standard = f"{name}-{_ISO_WORDS.get((m.group(2) or '').lower()) or m.group(3).lower()}"
+            standard_text = text.strip()
+            break
+
+    anchors = {i for i, (text, _) in enumerate(lines) if NOTE_ANCHOR.search(text)}
+    block = set(anchors)
+    for anchor in anchors:
+        ax0, ay0, _, ay1 = lines[anchor][1]
+        for i, (_, (x0, y0, _, _)) in enumerate(lines):
+            if ay0 - 3 <= y0 <= ay1 + NOTE_BELOW and ax0 - NOTE_LEFT <= x0 <= ax0 + NOTE_RIGHT:
+                block.add(i)
+    heights: list[tuple[float, list[int]]] = []
+    for i in sorted(block, key=lambda i: lines[i][1][1] + lines[i][1][3]):
+        centre = (lines[i][1][1] + lines[i][1][3]) / 2
+        if heights and abs(centre - heights[-1][0]) < 3:
+            heights[-1][1].append(i)
+        else:
+            heights.append((centre, [i]))
+
+    size_rows = []                         # (is the heading line, sizes, line indices, text)
+    decimals: dict[int, float] = {}
+    singles: list[float] = []
+    rows: set[int] = set()
+    texts: list[str] = []
+    for _, members in heights:
+        members.sort(key=lambda i: lines[i][1][0])
+        text = "  ".join(lines[i][0] for i in members).replace("+/-", "±").replace("+-", "±")
+        text = " ".join(text.replace("＞", ">").replace("＜", "<").replace("～", "~").split())
+        heading = not anchors.isdisjoint(members)
+        sizes, places, rest = _note_entries(text)
+        if sizes:
+            size_rows.append((heading, sizes, members, text))
+        if places:
+            for count, tol in places.items():
+                decimals.setdefault(count, tol)
+            rows.update(members)
+            texts.append(text)
+        if heading and not sizes and not places:
+            # "UNLESS OTHERWISE SPECIFIED ±0.1": one value that does not stand behind a size
+            singles += [float(m.group(1)) for m in _NOTE_VALUE.finditer(rest)
+                        if not rest[:m.start()].rstrip()[-1:].isdigit()]
+            texts.append(text)
+    # one lonely "2-5.5 ±0.05" beside the note is a dimension, not a table: below the heading line it takes two rows
+    if sum(len(sizes) for _, sizes, _, _ in size_rows) < 2:
+        size_rows = [row for row in size_rows if row[0]]
+    table = sorted({size for _, sizes, _, _ in size_rows for size in sizes})
+    for _, _, members, text in size_rows:
+        rows.update(members)
+        if text not in texts:
+            texts.append(text)
+    single = singles[0] if len(singles) == 1 and not table and not decimals else None
+    note_text = " | ".join(texts) if table or decimals or single is not None else standard_text
+    return _PageNote(table, decimals, single, standard, rows, note_text[:300])
+
+
+def _ocr_textpage(page, ocr: bool):
+    """OCR text of a page without a text layer (needs Tesseract), else None."""
+    if ocr and not page.get_text("text").strip() and tesseract_available():
+        try:
+            return page.get_textpage_ocr(full=True, dpi=300)
+        except Exception:  # noqa: BLE001 - OCR is best effort
+            return None
+    return None
+
+
+def find_general_note(pdf_path: str | Path, ocr: bool = False) -> GeneralNote | None:
+    """The general-tolerance note of a drawing, or None when no note is recognised.
+
+    When a drawing gives more than one, the most explicit wins: its own size table, then one
+    value for every size, then a class of ISO 2768 / JIS B 0405 / GB/T 1804, then a decimal-places
+    rule. Sizes a standard class does not cover (below 0.5 mm) return no tolerance, so the caller
+    falls back to its own table.
+    """
+    import fitz
+
+    best: tuple[int, _PageNote] | None = None
+    with fitz.open(str(pdf_path)) as doc:
+        for page_index, page in enumerate(doc):
+            note = _page_note(list(_lines(page, _ocr_textpage(page, ocr))))
+            if note.rank < 9 and (best is None or note.rank < best[1].rank):
+                best = (page_index, note)
+    if best is None:
+        return None
+    page_index, note = best
+    if note.table:
+        kind, table = "size table", note.table
+    elif note.single is not None:
+        kind, table = "single value", [(0.0, EVERY_SIZE, note.single)]
+    elif note.standard:
+        steps = zip(ISO_2768_STEPS[:-1], ISO_2768_STEPS[1:], ISO_2768[note.standard[-1]], strict=True)
+        kind, table = note.standard, [(lo, hi, tol) for lo, hi, tol in steps if tol is not None]
+    else:
+        kind, table = "decimal places", []
+    return GeneralNote(str(pdf_path), page_index, kind, table, dict(note.decimals), note.text)
+
+
 def find_dimension(pdf_path: str | Path, nominal: float, window: float = 0.03,
                    ocr: bool = False) -> list[DimensionHit]:
     """Search a 2D PDF for dimensions matching `nominal`, best candidate first.
@@ -270,7 +502,11 @@ def find_dimension(pdf_path: str | Path, nominal: float, window: float = 0.03,
                 used_ocr = True
             except Exception:  # noqa: BLE001 - OCR is best effort
                 textpage = None
-        for text, bbox in _lines(page, textpage):
+        lines = list(_lines(page, textpage))
+        note_rows = _page_note(lines).rows          # rows of the general-tolerance note are not dimensions
+        for index, (text, bbox) in enumerate(lines):
+            if index in note_rows:
+                continue
             for value, tp, tm, raw, kind in _parse_line(text):
                 if kind == "limit":
                     ok = value - window <= nominal <= value + tp + window

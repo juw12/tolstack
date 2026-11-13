@@ -26,10 +26,14 @@ Try it in one command: `python -m tolstack demo tolstack_demo --run` (writes a d
      dimension: `62.73±0.1`, `2 +0/-0.05`, upper- or lower-only `4 +0.1/0` / `4 0/-0.05`, limit dimensions
      `12.10/12.00` or `5.95~6.05`.
      All candidates are ranked and shown; you can pick another one. The used one is cropped with a red box as evidence.
-   - Title-block notes ("TOLERANCES UNLESS SPECIFIED …") are ignored so they cannot be mistaken for a dimension.
+   - Title-block notes ("TOLERANCES UNLESS SPECIFIED …") are never mistaken for a dimension.
    - If the 3D nominal differs from the drawing nominal, the **drawing limits are kept** and the difference is noted.
    - Drawings without a text layer (text exported as lines) are flagged; with Tesseract installed they can be OCR'd.
-   - Otherwise the **general tolerance table** applies (editable; default 0–10 ±0.05, 10–50 ±0.10, >50 ±0.15).
+   - Otherwise the **general tolerance of that part's drawing** applies: a size table under "TOLERANCES UNLESS
+     OTHERWISE SPECIFIED" / "未注公差", one ± value, ISO 2768 / JIS B 0405 / GB/T 1804 class f, m, c or v,
+     or a decimal-places rule (`X.XX ±0.05`). The source column names the drawing and the kind of note.
+   - Without a drawing, without a note, or for a size the note does not cover, the app's **general tolerance
+     table** applies (editable; default 0–10 ±0.05, 10–50 ±0.10, >50 ±0.15). Following the drawing can be switched off.
    - **GD&T callouts** (flatness, parallelism, profile, position …) found on the drawings are listed. They
      are not in the stack unless you add one as a row (zone of total width t → nominal 0, ± t/2).
 5. **Analyzes**: nominal, mean shift for asymmetric tolerances, worst case, RSS, Cp, Cpk, predicted ppm and yield,
@@ -71,9 +75,12 @@ for OCR of drawings without a text layer.
 streamlit run app.py
 ```
 
-1. Sidebar: **Demo assembly** (to try it), upload the STEP and 2D PDFs, **or** type the path to the STEP and the drawing folder.
+1. Sidebar: **Demo assembly** (to try it), upload the STEP and 2D PDFs - as loose files, a whole folder or one zip -
+   **or** type the path to a STEP, a folder or a zip on this computer.
    A saved YAML config can be loaded at the top of the sidebar to restore an analysis.
 2. Choose **Step** or **Gap**, then the *From* part + face and the *To* part + face; set LSL/USL (optional).
+   The **3D view** next to the lists highlights the picked parts and faces and follows every change (toggle it off
+   for a very large assembly). Faces are picked in the lists, not by clicking in the view.
 3. Pick the chain from the ranked list (and exclude parts that must not be in it), then **Build chain from 3D**.
    A section picture of the chain appears right away.
 4. Check the table. Open "2D drawings" to assign a drawing to a part or choose another dimension candidate.
@@ -107,7 +114,8 @@ After `pip install -e .` the same commands work as `tolstack demo|faces|paths|ru
 | `contact_tol` | faces closer than this (mm) count as touching |
 | `spec` | `{lsl, usl}` |
 | `drawings`, `drawing_map`, `ocr` | PDF globs; `{PART: file.pdf}` overrides (`''` = no drawing); OCR on/off |
-| `general_tolerance` | `[[from, to, ±tol], ...]` |
+| `general_tolerance` | `[[from, to, ±tol], ...]` - the app table |
+| `general_from_drawing` | `true` (default): use the general-tolerance note of each part's drawing before the table |
 | `sigma_level`, `mc_samples` | tolerance = ±k σ for `normal` rows; Monte Carlo sample count |
 | `extra` | rows that are not part thickness (bow, travel, float …) |
 | `overrides` | per row label, e.g. `{B: {tol_plus: 0.03, tol_minus: 0.03, dist: uniform, source: "CPK data"}}` |
@@ -125,6 +133,9 @@ Unknown keys are rejected, so a typo cannot silently change a result. See `examp
 - Contacts are **planar faces normal to the axis**. Screws, snaps, springs, cylindrical seats and switch
   actuation points are not contacts in the CAD; add them as extra rows.
 - 2D lookup needs PDFs with a **text layer** (or Tesseract for OCR). Check the source column and the 2D evidence sheet.
+- The **general-tolerance note** is found by pattern matching and is tested on synthetic drawings only. Check the
+  source column. The decimal-places rule needs the dimension to be found on the drawing; ISO 2768 has no value
+  below 0.5 mm, so such sizes use the app table.
 - A dimension that is not on the 2D is taken from the 3D with the general tolerance. That is common
   practice, but it is still an assumption, and the report says so in the source column.
 - Cp/Cpk and ppm assume the sum is normally distributed; Monte Carlo uses the per-row distributions.

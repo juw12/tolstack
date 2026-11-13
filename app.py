@@ -1,4 +1,5 @@
 """tolstack web app:  streamlit run app.py"""
+import shutil
 from dataclasses import asdict
 from pathlib import Path
 from uuid import uuid4
@@ -9,6 +10,7 @@ import yaml
 
 from tolstack.chain import build_chain, find_paths
 from tolstack.excel import write_report
+from tolstack.intake import extract_zip, find_inputs, sync_inbox
 from tolstack.pipeline import (
     CONFIG_VERSION,
     apply_tolerances,
@@ -21,6 +23,7 @@ from tolstack.pipeline import (
 )
 from tolstack.stack import DISTRIBUTIONS, Contributor, analyze, is_extra, sensitivity
 from tolstack.tolerances import DEFAULT_GENERAL_TABLE, tesseract_available
+from tolstack.view3d import VIEWS, scene_figure
 from tolstack.workspace import ROOT, clean_old, session_dir
 
 st.set_page_config(page_title="tolstack - tolerance stack-up", layout="wide")
@@ -33,12 +36,16 @@ with st.expander("How it works / what to prepare"):
         "**You need** one assembly STEP file (AP203 / AP214 / AP242, parts as separate solids, in their "
         "assembled position). **Optional:** the 2D drawings as PDF, one per part, named like the part "
         "(`SPACER.pdf` for part `SPACER`).\n\n"
-        "1. **Files** (sidebar) - upload the STEP and PDFs, or try the *Demo assembly*.\n"
-        "2. **What to analyze** - pick the stack-up axis, then the *From* and *To* faces. The result is the "
-        "distance To - From along that axis: a step (flush / offset) or a gap (clearance).\n"
+        "1. **Files** (sidebar) - upload the STEP and PDFs as files, as a whole folder or as one zip, or try "
+        "the *Demo assembly*.\n"
+        "2. **What to analyze** - pick the stack-up axis, then for *From* and *To* the part and its face. The "
+        "3D view marks both parts and both faces while you choose. The result is the distance To - From along "
+        "that axis: a step (flush / offset) or a gap (clearance).\n"
         "3. **Check the chain** - the app walks from one face to the other through parts that touch. Each row is "
-        "one dimension of one part. Tolerances come from the drawing when the dimension is found there, else "
-        "from the general tolerance table. Edit any cell; add rows for what CAD cannot see.\n"
+        "one dimension of one part. Tolerances come from the drawing when the dimension is found there with a "
+        "tolerance; else from the general-tolerance note of that part's drawing (a size table, ISO 2768-m, "
+        "X.XX ±0.05); else from the general tolerance table in the sidebar. Edit any cell; add rows for what "
+        "CAD cannot see.\n"
         "4. **Result** - worst case, RSS, Cpk and Monte Carlo against your spec limits, and which row matters most.\n"
         "5. **Excel report** - live formulas, the section picture, the 2D evidence and a sign-off block.\n\n"
         "Everything is in **mm**. The source column always says where a tolerance came from - check it before "
@@ -76,14 +83,11 @@ def reset_chain():
         st.session_state.pop(key, None)
 
 
-def save_upload(upload, folder: Path) -> Path:
-    """Write an uploaded file once. Rewriting it on every rerun would change its time stamp and reload the STEP."""
-    path = folder / Path(upload.name).name
-    if st.session_state.get(f"saved_{path}") != upload.file_id or not path.exists():
-        path.parent.mkdir(parents=True, exist_ok=True)
-        path.write_bytes(upload.getbuffer())
-        st.session_state[f"saved_{path}"] = upload.file_id
-    return path
+def reread_tolerances():
+    """Fill the tolerances from the 2D again; the rows added by hand are kept."""
+    if "chain" in st.session_state:
+        st.session_state.extra_rows = st.session_state.get("current_extra", [])
+        st.session_state.pop("chain")
 
 
 def safe_name(text: str) -> str:
@@ -115,6 +119,7 @@ with st.sidebar:
             st.session_state.axis = loaded.get("axis", "z")
             st.session_state.contact_tol = float(loaded.get("contact_tol", 0.02))
             st.session_state.sigma_level = float(loaded.get("sigma_level", 3.0))
+            st.session_state.follow_drawing = bool(loaded.get("general_from_drawing", True))
             spec = loaded.get("spec") or {}
             if spec.get("lsl") is not None:
                 st.session_state.lsl = float(spec["lsl"])
@@ -135,40 +140,88 @@ with st.sidebar:
                     key="input_mode",
                     help="The demo is a 5-part box stack with 2D drawings - a quick way to see every step.")
     step_path, drawings, drawing_globs = None, [], []
+    steps: list[str] = []                       # every STEP found in what was handed over, largest first
+    portable = mode != "Path on this computer"  # the config then names the files instead of pointing at them
     if mode == "Upload files":
-        step_file = st.file_uploader("3D assembly (STEP)", type=["step", "stp"],
-                                     help="One assembly file with every part as its own solid, in the assembled "
-                                          "position. Files stay in a private temporary folder and are deleted after "
-                                          "a day without use.")
-        pdf_files = st.file_uploader("2D drawings (PDF, optional)", type=["pdf"], accept_multiple_files=True,
-                                     help="Matched to parts by file name, e.g. SPACER.pdf -> part SPACER.")
-        if step_file:
-            step_path = save_upload(step_file, WORK)
-        elif st.session_state.get("config_needs"):
+        kinds = ["step", "stp", "pdf", "zip"]
+        files = st.file_uploader("STEP assembly and 2D drawings (PDF) - or one zip of them", type=kinds,
+                                 accept_multiple_files=True,
+                                 help="One assembly STEP with every part as its own solid, in the assembled "
+                                      "position, plus the part drawings. Drawings are matched to parts by file "
+                                      "name, e.g. SPACER.pdf -> part SPACER. A zip is unpacked here (STEP and PDF "
+                                      "only, sub-folders included). Files stay in a private temporary folder and "
+                                      "are deleted after a day without use.")
+        folder_files = st.file_uploader("... or a whole folder", type=kinds, accept_multiple_files="directory",
+                                        help="Pick the project folder: every STEP, PDF and zip in it and in its "
+                                             "sub-folders is uploaded.")
+        uploads = {u.file_id: (u.name, u.getvalue) for u in [*(files or []), *(folder_files or [])]}
+        for problem in sync_inbox(WORK / "inbox", uploads):
+            st.error(problem)
+        steps, drawings = find_inputs(WORK / "inbox")
+        if not steps and st.session_state.get("config_needs"):
             st.info(f"The loaded config expects **{st.session_state.config_needs}** - upload it here, "
                     "with the same drawings.")
-        drawings = [str(save_upload(f, WORK / "drawings")) for f in pdf_files or []]
+        elif uploads and not steps:
+            st.warning("No STEP file in the upload yet.")
+        if drawings:
+            st.caption(f"{len(drawings)} PDF drawings")
     elif mode == "Path on this computer":
-        typed = st.text_input("STEP file path", key="step_input",
-                              help="A path this app can read: on your own PC when you run it locally. "
+        typed = st.text_input("STEP file, folder or zip", key="step_input",
+                              help="A path this app can read: on your own PC when you run it locally. A folder or "
+                                   "a zip is searched for the STEP and the PDF drawings, sub-folders included. "
                                    "On a shared server use Upload files.")
-        folder = st.text_input("2D drawings folder (optional)", key="drawings_input")
-        if typed and Path(typed.strip('"')).is_file():
-            step_path = Path(typed.strip('"'))
-        elif typed:
-            st.error("STEP file not found - check the path (quotes are fine).")
+        folder = st.text_input("2D drawings folder (optional)", key="drawings_input",
+                               help="Only needed when the drawings are not in the folder or zip above.")
+        source = Path(typed.strip().strip('"')) if typed.strip() else None
+        beside: list[str] = []                  # the PDFs that came with the STEP
+        if source is None:
+            pass
+        elif source.is_dir():
+            steps, beside = find_inputs(source)
+            drawing_globs = [str(source / "*.pdf"), str(source / "**" / "*.pdf")]
+            if not steps:
+                st.error("No STEP file in this folder.")
+        elif source.is_file() and source.suffix.lower() == ".zip":
+            unpacked = WORK / "zip" / f"{safe_name(source.stem)}_{int(source.stat().st_mtime)}"
+            try:
+                if not unpacked.exists():       # unpack once: a rewritten STEP would be read again on every rerun
+                    extract_zip(source, unpacked)
+                steps, beside = find_inputs(unpacked)
+                portable = True
+                if not steps:
+                    st.error("No STEP file in this zip.")
+            except (ValueError, OSError) as err:
+                shutil.rmtree(unpacked, ignore_errors=True)
+                st.error(f"Could not open this zip: {err}")
+        elif source.is_file():
+            steps = [str(source)]
+        else:
+            st.error("Path not found - check it (quotes are fine).")
         if folder:
-            root = Path(folder.strip('"'))
+            root = Path(folder.strip().strip('"'))
             if not root.is_dir():
                 st.error("Drawings folder not found.")
             else:
                 drawing_globs = [str(root / "*.pdf"), str(root / "**" / "*.pdf")]
-                drawings = sorted(set(expand_drawings(drawing_globs, Path("."))))
+                drawings = sorted(expand_drawings(drawing_globs, Path(".")))
                 st.caption(f"{len(drawings)} PDF drawings found")
+        elif beside:
+            drawings = beside
+            st.caption(f"{len(drawings)} PDF drawings found with the STEP")
     else:
         demo_step, drawings = demo_files()
         step_path = Path(demo_step)
         st.caption("Demo: pick POST top -> CAP_TOP top for the +1.6 step.")
+    if len(steps) > 1:
+        if st.session_state.get("step_pick") not in steps:
+            st.session_state.pop("step_pick", None)
+        expected = st.session_state.get("config_needs", "")
+        step_path = Path(st.selectbox(
+            f"Assembly STEP ({len(steps)} found, largest first)", steps, key="step_pick", on_change=reset_chain,
+            index=next((i for i, s in enumerate(steps) if Path(s).name == expected), 0),
+            format_func=lambda s: f"{Path(s).name}  ({Path(s).stat().st_size / 1e6:.1f} MB)"))
+    elif steps:
+        step_path = Path(steps[0])
 
     st.header("Settings")
     axis = st.selectbox("Stack-up direction (axis)", ["z", "y", "x"], key="axis", on_change=reset_chain)
@@ -181,11 +234,22 @@ with st.sidebar:
     ocr = st.checkbox("OCR drawings without a text layer", value=False, disabled=not tesseract_available(),
                       help="Needs Tesseract installed. Without it, such drawings fall back to the general table.")
     st.subheader("General tolerance")
+    st.session_state.setdefault("follow_drawing", True)
+    follow_drawing = st.checkbox("General tolerance follows the 2D drawing", key="follow_drawing",
+                                 on_change=reread_tolerances,
+                                 help="A dimension without its own tolerance takes the general tolerance written on "
+                                      "that part's drawing: a size table under 'TOLERANCES UNLESS OTHERWISE "
+                                      "SPECIFIED' / '未注公差', one ± value, ISO 2768 / JIS B 0405 / GB/T 1804 "
+                                      "class f, m, c or v, or a decimal-places rule (X.XX ±0.05).")
+    st.caption("Table below: used for a part without a drawing, and when the drawing has no general-tolerance "
+               "note or the note does not cover the size." if follow_drawing else
+               "Table below: used for every dimension without its own tolerance.")
     general = st.data_editor(pd.DataFrame(DEFAULT_GENERAL_TABLE, columns=["from mm", "to mm", "± tol"]),
                              num_rows="dynamic", key="general")
 
 if step_path is None:
-    st.info("Upload a STEP assembly, type its path, or choose **Demo assembly** in the sidebar to start.")
+    st.info("Upload a STEP assembly (files, a folder or a zip), type its path, or choose **Demo assembly** in the "
+            "sidebar to start.")
     st.stop()
 
 try:
@@ -247,10 +311,35 @@ if pending:
     names = {p.name.lower(): f"[{p.index}] {p.name}" for p in model.parts}
     st.session_state.exclude = [names[n.lower()] for n in pending.get("exclude", []) if n.lower() in names]
 
-c1, c2 = st.columns(2)
 is_gap = ta_type.startswith("Gap")
+# Streamlit forgets a widget that is not drawn: keep the "Show" choice while the 3D view is switched off
+st.session_state.view_show = st.session_state.get("view_show", VIEWS[0])
+show_3d = st.toggle("3D view of the picked parts and faces", value=True, key="show_3d",
+                    help="Follows the Part and Face choices as you change them. Drag to turn, scroll to zoom, "
+                         "click a legend entry to hide that part. Switch it off for a very large assembly.")
+if show_3d:
+    c1, view_column = st.columns([2, 3])
+    c2 = c1
+    view_show = view_column.radio("Show", VIEWS, horizontal=True, key="view_show")
+    view_slot = view_column.empty()
+else:
+    c1, c2 = st.columns(2)
 start = face_picker(c1, "From (reference)", "top")
 end = face_picker(c2, "To", "bottom" if is_gap else "top")
+
+
+def draw_view(chain_parts=()):
+    """The 3D picture of the current choice. Called once per run, when the chain is known or can not be found."""
+    if not show_3d or start is None or end is None:
+        return
+    figure, boxed = scene_figure(model.parts, start, end, chain_parts, view_show)
+    with view_slot.container():
+        st.plotly_chart(figure, key="view_3d", use_container_width=True)
+        st.caption("Blue = From, orange / red = To, dashed line = the measured distance along "
+                   f"{axis.upper()}. Faces are picked in the lists on the left, not by clicking here."
+                   + (f" {boxed} part(s) are drawn as boxes to keep the view fast." if boxed else ""))
+
+
 exclude = st.multiselect("Parts the chain must NOT pass through (e.g. a big housing that touches everything)",
                          part_names, key="exclude", on_change=reset_chain)
 s1, s2 = st.columns(2)
@@ -266,6 +355,7 @@ usl = s2.number_input("Spec upper limit (USL, optional)", value=None, format="%.
 if lsl is None and usl is None:
     st.caption("No spec limits yet: you get nominal, worst case and RSS; the verdict and Cpk need a limit.")
 if lsl is not None and usl is not None and lsl > usl:
+    draw_view()
     st.error("LSL is above USL.")
     st.stop()
 if start is None or end is None:
@@ -274,6 +364,7 @@ if start is None or end is None:
 excluded = {part_index(x) for x in exclude}
 options = find_paths(start.part, end.part, model.contacts, excluded - {start.part, end.part})
 if not options:
+    draw_view()
     st.error(f"No contact chain between {model.parts[start.part].name} and {model.parts[end.part].name}. "
              "Check the axis, raise the contact tolerance, or remove parts from the exclude list. Parts held "
              "only by screws or snaps have no face contact - add them as rows in step 3.")
@@ -282,6 +373,7 @@ option_labels = [f"{i + 1}. {o.describe(model.parts)}" for i, o in enumerate(opt
 picked = st.radio("Chain through the assembly (best ranked first - fewest contacts, then largest contact area)",
                   option_labels, key=f"chain_option_{start.part}_{end.part}_{len(options)}", on_change=reset_chain)
 chosen = options[option_labels.index(picked)]
+draw_view([index for parent, child, _ in chosen.steps for index in (parent, child)])
 if len(options) > 1:
     st.caption(f"{len(options)} possible chains. They all close to the same nominal, but each one adds "
                "different tolerances - pick the one that matches how the parts are really held.")
@@ -312,11 +404,13 @@ if "chain" not in st.session_state:
             contributors.append(Contributor(**{"source": "manual", **row}))
         except TypeError as err:
             st.warning(f"Extra row skipped ({err}).")
-    found, gdt_found = {}, {}
+    found, gdt_found, notes_found = {}, {}, {}
     apply_tolerances(contributors, drawings, table, WORK / "refs", drawing_map=st.session_state.drawing_map,
-                     choices=st.session_state.choices, candidates_out=found, ocr=ocr, gdt_out=gdt_found)
+                     choices=st.session_state.choices, candidates_out=found, ocr=ocr, gdt_out=gdt_found,
+                     follow_drawing=follow_drawing, general_out=notes_found)
     st.session_state.candidates = found
     st.session_state.gdt = gdt_found
+    st.session_state.general_notes = notes_found
     st.session_state.editor_version = st.session_state.get("editor_version", 0) + 1
     st.session_state.chain = [asdict(c) for c in contributors]
 
@@ -347,6 +441,11 @@ with st.expander("2D drawings: which drawing belongs to which part, and which di
             new_choices[label] = labels.index(pick)
     if not drawings:
         st.caption("No drawings loaded - every tolerance comes from the general table.")
+    elif not follow_drawing:
+        st.caption("General-tolerance notes on the drawings are not used (sidebar: General tolerance).")
+    for part, note in st.session_state.get("general_notes", {}).items():
+        st.caption(f"General tolerance of {part}: "
+                   + (note.label() if note else "no note found on its drawing - the app table is used"))
     if st.button("Re-read tolerances with these choices", key="reread"):
         st.session_state.drawing_map = new_map
         st.session_state.choices = new_choices
@@ -494,12 +593,14 @@ if st.button("Create Excel", key="excel"):
             "alternatives": st.session_state.alternatives,
             "units": " + ".join(model.units) or "not declared",
             "warnings": [model.unit_note] if model.unit_note else [],
-            "gdt": [f"{part}: {hit.label()}" for part, hit in gdt_hits]}
+            "gdt": [f"{part}: {hit.label()}" for part, hit in gdt_hits],
+            "general_notes": [f"{part}: {note.label()}"
+                              for part, note in st.session_state.get("general_notes", {}).items() if note]}
     out = write_report(WORK / f"{safe_name(ta_name)}.xlsx", contributors, result, meta, section_png)
     st.download_button("Download Excel", Path(out).read_bytes(), file_name=Path(out).name,
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
-if mode == "Path on this computer":
+if not portable:
     paths = {"step": str(step_path), "drawing_map": st.session_state.drawing_map}
     if drawing_globs:
         paths["drawings"] = drawing_globs
@@ -512,14 +613,15 @@ config = {
     "to": {"part": model.parts[end.part].name, "face": end.kind, "level": end.level},
     "exclude": [model.parts[i].name for i in sorted(excluded)],
     "chain_option": option_labels.index(picked) + 1, "contact_tol": contact_tol, "sigma_level": sigma_level,
-    "spec": {"lsl": lsl, "usl": usl}, "general_tolerance": [list(r) for r in table],
+    "spec": {"lsl": lsl, "usl": usl}, "general_from_drawing": follow_drawing,
+    "general_tolerance": [list(r) for r in table],
     "extra": st.session_state.current_extra,
     "section": {"cut_axis": cut_axis}, "output": f"{safe_name(ta_name)}.xlsx",
 }
 st.download_button("Download this analysis as a config (re-run with `python -m tolstack run`)",
                    yaml.safe_dump(config, sort_keys=False, allow_unicode=True), file_name="tolstack_config.yaml",
                    key="config_download")
-if mode != "Path on this computer":
+if portable:
     st.caption(f"The config names the files instead of pointing at this server. To run it again, keep it in one "
                f"folder with `{paths['step']}` and the PDFs in a `drawings` sub-folder, then "
                "`python -m tolstack run tolstack_config.yaml` - or load it here and upload the same files.")

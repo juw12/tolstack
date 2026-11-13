@@ -1,0 +1,8 @@
+# Streamlit settings for the tolstack app (read when streamlit starts in this folder).
+[server]
+# No source-file watching: the watcher re-scans every imported module on the server's event loop,
+# which stalls the page on a busy machine, and a served app does not need live reload.
+fileWatcherType = "none"
+
+[browser]
+gatherUsageStats = false

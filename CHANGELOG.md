@@ -3,6 +3,31 @@
 All notable changes to tolstack. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/). Config files carry their own `version` (currently 1).
 
+## [0.4.0] - 2026-11-13
+
+### Added
+- Upload a **whole folder** or **one zip** as well as loose files. STEP and PDF files are taken from it,
+  sub-folders included; anything else in a zip is skipped. "Path on this computer" also accepts a folder
+  or a zip. With several STEP files you choose the assembly (largest first).
+- **General tolerance follows the 2D drawing**: a dimension without its own tolerance now takes the general
+  tolerance written on that part's drawing. Read: a size table under "TOLERANCES UNLESS OTHERWISE
+  SPECIFIED" / "未注公差", one ± value, ISO 2768 / JIS B 0405 / GB/T 1804 class f, m, c or v, and a
+  decimal-places rule (`X.XX ±0.05`, used when the dimension is found on the drawing). The source column
+  names the drawing and the kind of note; the notes are listed in the app and on the "Assumptions" sheet.
+- **3D view** of the assembly in the app (toggle): the From and To parts and the picked faces are
+  highlighted and follow the Part / Face lists as you change them; the chain parts can be shown too.
+  Faces are still picked in the lists, not by clicking in the view.
+- Config key `general_from_drawing` (default `true`); drawing globs may use `**` for sub-folders.
+
+### Changed
+- **Results can change**: with a general-tolerance note on a drawing, rows that used the app table before
+  now use the drawing's value. Untick "General tolerance follows the 2D drawing" (or set
+  `general_from_drawing: false`) to get the 0.3.0 behaviour. The app table is still used for a part
+  without a drawing, a drawing without a note, and a size the note does not cover.
+- The app needs Streamlit 1.49 or newer (folder upload) and Plotly (3D view).
+- Streamlit's source-file watcher is off (`.streamlit/config.toml`, also copied into the Docker image):
+  its module scan runs on the server's event loop and made the page stall on a busy machine.
+
 ## [0.3.0] - 2026-11-13
 
 ### Added

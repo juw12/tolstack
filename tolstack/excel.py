@@ -286,6 +286,8 @@ def _assumptions_sheet(wb, meta: dict, result: Result):
     ]
     for callout in meta.get("gdt", []):
         lines.append(("GD&T on the drawings", callout))
+    for general in meta.get("general_notes", []):
+        lines.append(("General tolerance on the drawing", general))
     for w in meta.get("warnings", []):
         lines.append(("Warning", w))
     row = 3
@@ -294,7 +296,8 @@ def _assumptions_sheet(wb, meta: dict, result: Result):
         ws.cell(row, 2, str(v)).alignment = Alignment(wrap_text=True, vertical="top")
         row += 1
     row += 1
-    ws.cell(row, 1, "General tolerance table (used when the 2D gives no tolerance)").font = Font(bold=True)
+    heading = "General tolerance table (used when the 2D gives no tolerance and no general-tolerance note)"
+    ws.cell(row, 1, heading).font = Font(bold=True)
     row += 1
     for col, name in enumerate(["from mm", "to mm", "± tol"], start=1):
         cell = ws.cell(row, col, name)
