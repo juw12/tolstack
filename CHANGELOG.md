@@ -3,6 +3,14 @@
 All notable changes to tolstack. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/). Config files carry their own `version` (currently 1).
 
+## [Unreleased]
+
+### Fixed
+- **AICC deploys were blocked by the server security scan** (ERROR `dangerous-subprocess-use-audit` on the Creo
+  launch in `tolstack/creo.py`). The call is audited and marked `# nosemgrep`: no shell, fixed arguments, and only an
+  executable named `parametric*` (found under `PTC\Creo*` or set in `TOLSTACK_CREO`) is started. Creo must still be
+  started by its full path - with a bare `parametric` as argv[0] it exits at once without a log.
+
 ## [0.7.0] - 2026-11-13
 
 A stack-up that is not a chain of flat faces (a radial seal squeeze, a fit between two diameters), and what comes
