@@ -1,6 +1,8 @@
 """Command line: `tolstack faces model.step` and `tolstack run config.yaml`.
 
 `run` also takes a config without a STEP file: hand-written `rows`, see examples/seal_squeeze_config.yaml.
+`fits model.step A B` finds the locating fits between two parts (bore / shaft, facing walls) and can print
+them as stack rows (`--rows`).
 """
 from __future__ import annotations
 
@@ -21,6 +23,14 @@ def main(argv=None):
     run.add_argument("config")
     paths = sub.add_parser("paths", help="list the candidate chains between the config's from/to faces")
     paths.add_argument("config")
+    fits = sub.add_parser("fits", help="locating fits between two parts across the stack axis "
+                                       "(bore / shaft, facing walls) - the float CAD contacts do not show")
+    fits.add_argument("step")
+    fits.add_argument("part_a", help="the part that floats (name or part of it)")
+    fits.add_argument("part_b", help="the part that holds it")
+    fits.add_argument("--axis", default="z", choices=["x", "y", "z"], help="stack-up axis")
+    fits.add_argument("--max-clearance", type=float, default=0.5, help="largest clearance that counts as a fit (mm)")
+    fits.add_argument("--rows", action="store_true", help="also print the fits as YAML rows for `rows` / `extra`")
     demo = sub.add_parser("demo", help="write the demo STEP + 2D drawings into a folder")
     demo.add_argument("folder", nargs="?", default="tolstack_demo")
     demo.add_argument("--run", action="store_true", help="also write demo_config.yaml and run it -> Excel")
@@ -39,6 +49,24 @@ def main(argv=None):
         print(f"{len(model.contacts)} contacts found along {args.axis} (contact tolerance {model.contact_tol} mm)")
         if model.unit_note:
             print(f"warning: {model.unit_note}")
+    elif args.cmd == "fits":
+        from .cad import load_step, step_length_units, unit_note
+        from .fits import find_fits, pick_part
+
+        parts = load_step(args.step)
+        try:
+            part_a, part_b = pick_part(parts, args.part_a), pick_part(parts, args.part_b)
+        except ValueError as err:
+            raise SystemExit(f"tolstack: {err}") from err
+        report = find_fits(part_a, part_b, args.axis, max_clearance=args.max_clearance)
+        print("\n".join(report.lines()))
+        note = unit_note(step_length_units(args.step))
+        if note:
+            print(f"warning: {note}")
+        if args.rows:
+            rows = report.rows()
+            print("# paste under `rows` (no STEP) or `extra` (with a STEP); check each direction against your stack")
+            print(yaml.safe_dump(rows, sort_keys=False, allow_unicode=True) if rows else "# no fit to write as rows")
     elif args.cmd == "demo":
         from .demo import write_demo, write_demo_config
 

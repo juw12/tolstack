@@ -2,4 +2,4 @@
 from .stack import Contributor, Result, analyze
 
 __all__ = ["Contributor", "Result", "analyze"]
-__version__ = "0.7.0"
+__version__ = "0.8.0"

@@ -119,6 +119,236 @@ def safe_name(text: str) -> str:
 UPLOAD_LIMIT_MB = int(st.get_option("server.maxUploadSize"))
 
 
+# ---------------------------------------------------------------- stack written by hand (no STEP)
+HAND = "Rows by hand (no STEP)"
+HAND_COLUMNS = ["label", "part", "description", "nominal", "tol_plus", "tol_minus", "direction", "diameter", "dist"]
+EXAMPLE_CONFIG = Path(__file__).parent / "examples" / "seal_squeeze_config.yaml"
+
+
+def number_list(text) -> list[float]:
+    """'0.14, 0.17 0.19' -> [0.14, 0.17, 0.19]; raises ValueError on a word that is not a number."""
+    words = str(text or "").replace(";", " ").replace(",", " ").split()
+    return [float(w) for w in words]
+
+
+def load_hand(config: dict) -> None:
+    """Put a hand-written config (rows, spec, measured, limit) into the widgets of the hand page."""
+    st.session_state.hand_rows = config.get("rows") or []
+    st.session_state.hand_name = str(config.get("name") or "Stack written by hand")
+    spec = config.get("spec") or {}
+    st.session_state.hand_lsl = None if spec.get("lsl") is None else float(spec["lsl"])
+    st.session_state.hand_usl = None if spec.get("usl") is None else float(spec["usl"])
+    st.session_state.hand_measured = [
+        {"name": g.get("name", ""), "result": g.get("result", ""),
+         "values": ", ".join(f"{v:g}" for v in g.get("values") or []), "min": g.get("min"), "max": g.get("max")}
+        for g in config.get("measured") or []]
+    limit = config.get("limit") or {}
+    st.session_state.hand_limit_kind = ("typed value" if "value" in limit else
+                                        "fitted from a test" if limit else "none")
+    st.session_state.hand_limit_value = limit.get("value")
+    st.session_state.hand_limit_x = ", ".join(f"{v:g}" for v in limit.get("x") or [])
+    st.session_state.hand_limit_y = ", ".join(f"{v:g}" for v in limit.get("y") or [])
+    st.session_state.hand_limit_ylimit = limit.get("y_limit")
+    st.session_state.hand_limit_side = limit.get("side", "lower")
+    st.session_state.hand_limit_label = limit.get("label", "limit")
+    st.session_state.hand_version = st.session_state.get("hand_version", 0) + 1
+    st.session_state.pop("hand_run", None)
+
+
+def show_result_metrics(result, sigma_level: float) -> None:
+    has_spec = result.lsl is not None or result.usl is not None
+    m = st.columns(3)
+    m[0].metric("Nominal", f"{result.nominal:+.3f}", help=f"mean with asymmetric tolerances {result.mean:+.3f}")
+    m[1].metric("Worst case", f"{result.wc_min:+.3f} ~ {result.wc_max:+.3f}",
+                help=f"WC verdict {result.verdict('wc') if has_spec else 'no spec'}")
+    m[2].metric(f"RSS ({sigma_level:g}σ)", f"{result.rss_min:+.3f} ~ {result.rss_max:+.3f}")
+    m = st.columns(3)
+    m[0].metric("RSS verdict", result.verdict("rss") if has_spec else "no spec")
+    m[1].metric("Cpk", "-" if result.cpk is None else f"{result.cpk:.2f}",
+                help="Cpk >= 1.33 is a common target. From the mean and sigma of the sum."
+                + ("" if result.yield_pct is None else f" Predicted yield {result.yield_pct:.4f} %."))
+    m[2].metric("Monte Carlo out of spec", f"{result.mc_out_pct:.3f} %" if has_spec else "-",
+                help=f"{result.mc_samples:,} samples, per-row distributions. Normal approximation: {result.ppm:.0f} ppm"
+                if result.ppm is not None else None)
+
+
+def hand_config(rows_frame, measured_frame, table, sigma_level: float) -> tuple[dict, list[str]]:
+    """The config of the hand page, as `tolstack run` reads it, and the rows that were skipped."""
+    skipped: list[str] = []
+    rows = []
+    for index, r in enumerate(rows_frame.to_dict("records"), start=1):
+        label = "" if pd.isna(r.get("label")) else str(r["label"]).strip()
+        nominal = pd.to_numeric(r.get("nominal"), errors="coerce")
+        if not label or pd.isna(nominal):
+            if label or not pd.isna(nominal):
+                skipped.append(f"row {index}: needs a label and a nominal")
+            continue
+        row = {"label": label, "nominal": float(nominal)}
+        for key in ("part", "description"):
+            if not pd.isna(r.get(key)) and str(r.get(key)).strip():
+                row[key] = str(r[key]).strip()
+        plus, minus = (pd.to_numeric(r.get(k), errors="coerce") for k in ("tol_plus", "tol_minus"))
+        if not (pd.isna(plus) and pd.isna(minus)):        # both empty: look the tolerance up (general table)
+            row["tol_plus"] = 0.0 if pd.isna(plus) else float(plus)
+            row["tol_minus"] = 0.0 if pd.isna(minus) else float(minus)
+        direction = pd.to_numeric(r.get("direction"), errors="coerce")
+        row["direction"] = -1 if not pd.isna(direction) and direction < 0 else 1
+        if bool(r.get("diameter")) and not pd.isna(r.get("diameter")):
+            row["diameter"] = True
+        if not pd.isna(r.get("dist")) and r.get("dist") and r.get("dist") != "normal":
+            row["dist"] = str(r["dist"])
+        rows.append(row)
+    measured = []
+    for r in measured_frame.to_dict("records"):
+        name = "" if pd.isna(r.get("name")) else str(r["name"]).strip()
+        if not name:
+            continue
+        group: dict = {"name": name}
+        if not pd.isna(r.get("result")) and str(r.get("result")).strip():
+            group["result"] = str(r["result"]).strip()
+        values = number_list("" if pd.isna(r.get("values")) else r.get("values"))
+        if values:
+            group["values"] = values
+        else:
+            group["min"], group["max"] = r.get("min"), r.get("max")
+        measured.append(group)
+    config: dict = {
+        "version": CONFIG_VERSION, "title": "Tolerance stack-up", "name": st.session_state.hand_name,
+        "type": "manual", "spec": {"lsl": st.session_state.hand_lsl, "usl": st.session_state.hand_usl},
+        "sigma_level": sigma_level, "general_tolerance": [list(r) for r in table], "rows": rows,
+    }
+    if measured:
+        config["measured"] = measured
+    kind = st.session_state.hand_limit_kind
+    side, label = st.session_state.hand_limit_side, st.session_state.hand_limit_label or "limit"
+    if kind == "typed value" and st.session_state.hand_limit_value is not None:
+        config["limit"] = {"value": float(st.session_state.hand_limit_value), "side": side, "label": label}
+    elif kind == "fitted from a test":
+        config["limit"] = {"x": number_list(st.session_state.hand_limit_x),
+                           "y": number_list(st.session_state.hand_limit_y),
+                           "y_limit": st.session_state.hand_limit_ylimit, "side": side, "label": label}
+    config["pictures"] = True
+    config["output"] = f"{safe_name(st.session_state.hand_name)}.xlsx"
+    return config, skipped
+
+
+def hand_page(table, sigma_level: float) -> None:
+    """A stack whose rows are typed in: a radial squeeze, a fit, anything the 3D chain does not cover."""
+    from tolstack.pipeline import run_config
+
+    st.header("2. Rows of the stack")
+    st.caption("Result = sum of direction × nominal. A row with both tolerances empty takes the general tolerance "
+               "(sidebar). **diameter**: the drawing gives a diameter (or a symmetric width) and the stack is on "
+               "one side, so size and tolerance are halved - after the tolerance lookup at the full size. "
+               "Find the locating fits between two parts of a STEP with `tolstack fits model.step A B --rows`.")
+    for key, value in (("hand_rows", []), ("hand_name", "Stack written by hand"), ("hand_lsl", None),
+                       ("hand_usl", None), ("hand_measured", []), ("hand_limit_kind", "none"),
+                       ("hand_limit_value", None), ("hand_limit_x", ""), ("hand_limit_y", ""),
+                       ("hand_limit_ylimit", None), ("hand_limit_side", "lower"), ("hand_limit_label", "limit")):
+        st.session_state.setdefault(key, value)
+    if EXAMPLE_CONFIG.exists() and st.button("Fill in the example (seal ring squeeze)", key="hand_example"):
+        load_hand(yaml.safe_load(EXAMPLE_CONFIG.read_text(encoding="utf-8")))
+        st.rerun()
+    version = st.session_state.get("hand_version", 0)
+    c1, c2, c3 = st.columns([2, 1, 1])
+    c1.text_input("Analysis name", key="hand_name")
+    c2.number_input("LSL", format="%.4f", key="hand_lsl", help="lower spec limit, empty = none")
+    c3.number_input("USL", format="%.4f", key="hand_usl", help="upper spec limit, empty = none")
+    start = pd.DataFrame(st.session_state.hand_rows, columns=HAND_COLUMNS)
+    start["direction"] = pd.to_numeric(start["direction"], errors="coerce").fillna(1).astype(int)
+    start["diameter"] = start["diameter"].fillna(False).astype(bool)
+    start["dist"] = start["dist"].fillna("normal")
+    rows_frame = st.data_editor(
+        start, num_rows="dynamic", use_container_width=True, key=f"hand_editor_{version}",
+        column_config={
+            "direction": st.column_config.SelectboxColumn("direction", options=[1, -1], required=True, default=1),
+            "diameter": st.column_config.CheckboxColumn("diameter", default=False,
+                                                        help="size on the drawing is a diameter: halve it"),
+            "dist": st.column_config.SelectboxColumn("dist", options=list(DISTRIBUTIONS), default="normal"),
+            "nominal": st.column_config.NumberColumn("nominal", format="%.4f"),
+            "tol_plus": st.column_config.NumberColumn("+tol", min_value=0.0, format="%.4f"),
+            "tol_minus": st.column_config.NumberColumn("-tol", min_value=0.0, format="%.4f"),
+        })
+
+    with st.expander("Measured parts and a tested limit (optional)",
+                     expanded=bool(st.session_state.hand_measured) or st.session_state.hand_limit_kind != "none"):
+        st.caption("Where do real parts sit in the range? One group per line: the measured results as a list "
+                   "(0.27, 0.31, ...) or only min / max.")
+        measured_frame = st.data_editor(
+            pd.DataFrame(st.session_state.hand_measured, columns=["name", "result", "values", "min", "max"]),
+            num_rows="dynamic", use_container_width=True, key=f"hand_measured_{version}",
+            column_config={"values": st.column_config.TextColumn("values", help="numbers, comma separated"),
+                           "min": st.column_config.NumberColumn("min", format="%.4f"),
+                           "max": st.column_config.NumberColumn("max", format="%.4f")})
+        st.radio("Functional limit on the result", ["none", "typed value", "fitted from a test"],
+                 horizontal=True, key="hand_limit_kind")
+        if st.session_state.hand_limit_kind != "none":
+            l1, l2 = st.columns(2)
+            l1.text_input("Limit label", key="hand_limit_label")
+            l2.selectbox("Fails when the result is", ["lower", "upper"], key="hand_limit_side",
+                         format_func=lambda s: "below the limit" if s == "lower" else "above the limit")
+        if st.session_state.hand_limit_kind == "typed value":
+            st.number_input("Limit value", format="%.4f", key="hand_limit_value")
+        elif st.session_state.hand_limit_kind == "fitted from a test":
+            st.caption("Test points: x = the stack result of each sample, y = what it measured (pressure, force). "
+                       "A straight line is fitted; the limit is the x where it reaches the y it has to hold.")
+            f1, f2, f3 = st.columns([2, 2, 1])
+            f1.text_input("x (stack result per sample)", key="hand_limit_x")
+            f2.text_input("y (measured per sample)", key="hand_limit_y")
+            f3.number_input("y to hold", format="%.4f", key="hand_limit_ylimit")
+
+    try:
+        config, skipped = hand_config(rows_frame, measured_frame, table, sigma_level)
+    except ValueError as err:
+        st.error(f"Check the numbers: {err}")
+        st.stop()
+    for problem in skipped:
+        st.warning(f"Skipped {problem}.")
+    if not config["rows"]:
+        st.info("Add the rows of the stack (label, nominal, tolerances, direction), or fill in the example.")
+        st.stop()
+    if st.button("Calculate", type="primary", key="hand_run_button"):
+        out_dir = WORK / "hand"
+        notes: list[str] = []
+        try:
+            contributors, result, out = run_config(config, out_dir, notes)
+        except (ValueError, TypeError) as err:
+            st.error(f"Could not run this stack: {err}")
+            st.stop()
+        stem = Path(out).with_suffix("")
+        st.session_state.hand_run = {
+            "config": config, "rows": [asdict(c) for c in contributors], "result": result, "excel": out,
+            "notes": notes, "pictures": [p for p in (f"{stem}_chart.png", f"{stem}_table.png") if Path(p).exists()],
+        }
+    run = st.session_state.get("hand_run")
+    if not run:
+        st.stop()
+    if run["config"] != config:
+        st.info("The inputs changed since the last calculation - press Calculate again.")
+
+    st.header("3. Result")
+    result = run["result"]
+    show_result_metrics(result, sigma_level)
+    contributors = [Contributor(**r) for r in run["rows"]]
+    st.bar_chart(pd.DataFrame({"variance contribution %": result.contributions},
+                              index=[c.label for c in contributors]))
+    st.dataframe(pd.DataFrame(run["rows"])[["label", "part", "description", "nominal", "tol_plus", "tol_minus",
+                                             "direction", "dist", "source"]],
+                 hide_index=True, use_container_width=True)
+    for note in run["notes"]:
+        if not note.startswith("picture:"):
+            st.caption(note)
+    for picture in run["pictures"]:
+        st.image(picture)
+    st.header("4. Excel report")
+    st.download_button("Download Excel", Path(run["excel"]).read_bytes(), file_name=Path(run["excel"]).name,
+                       mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", key="hand_excel")
+    saved = {k: v for k, v in run["config"].items() if k != "pictures" or v}
+    st.download_button("Download this analysis as a config (re-run with `python -m tolstack run`)",
+                       yaml.safe_dump(saved, sort_keys=False, allow_unicode=True), file_name="tolstack_config.yaml",
+                       key="hand_config_download")
+
+
 def step_label(step: str) -> str:
     """Name, size and the folder it came from, so two STEP files of the same name can be told apart."""
     path = Path(step)
@@ -179,45 +409,51 @@ with st.sidebar:
         try:
             loaded = yaml.safe_load(saved.getvalue().decode("utf-8")) or {}
             validate_config(loaded)
-            if "step" not in loaded:
-                raise ValueError("it has hand-written `rows` and no STEP file - run it with `tolstack run <config>`")
             st.session_state.loaded_config_id = saved.file_id
-            config_step = Path(str(loaded["step"]))
-            globs = loaded.get("drawings") or []
-            if config_step.is_absolute() and config_step.is_file():
-                st.session_state.input_mode = "Path on this computer"
-                st.session_state.step_input = str(config_step)
-                if globs:
-                    st.session_state.drawings_input = str(Path(globs[0]).parent)
-                st.session_state.pop("config_needs", None)
-            else:                                   # a portable config, or one from another computer
-                st.session_state.input_mode = "Upload files"
-                st.session_state.config_needs = config_step.name
-            st.session_state.config_map = loaded.get("drawing_map") or {}
-            st.session_state.config_extra = loaded.get("extra") or []
-            st.session_state.axis = loaded.get("axis", "z")
-            st.session_state.contact_tol = float(loaded.get("contact_tol", 0.02))
-            st.session_state.sigma_level = float(loaded.get("sigma_level", 3.0))
-            st.session_state.follow_drawing = bool(loaded.get("general_from_drawing", True))
-            spec = loaded.get("spec") or {}
-            if spec.get("lsl") is not None:
-                st.session_state.lsl = float(spec["lsl"])
-            if spec.get("usl") is not None:
-                st.session_state.usl = float(spec["usl"])
-            st.session_state.ta_type = TYPES[1] if loaded.get("type") == "gap" else TYPES[0]
-            st.session_state.pending_config = loaded
-            reset_chain()
-            if st.session_state.get("config_needs"):
-                st.success("Config loaded - now upload its STEP file and drawings below.")
+            if "step" not in loaded:                # hand-written rows: open them on the hand page
+                st.session_state.input_mode = HAND
+                st.session_state.sigma_level = float(loaded.get("sigma_level", 3.0))
+                load_hand(loaded)
+                st.success("Config loaded - its rows are on the page; press Calculate.")
             else:
-                st.success("Config loaded - check the faces, then build the chain.")
+                config_step = Path(str(loaded["step"]))
+                globs = loaded.get("drawings") or []
+                if config_step.is_absolute() and config_step.is_file():
+                    st.session_state.input_mode = "Path on this computer"
+                    st.session_state.step_input = str(config_step)
+                    if globs:
+                        st.session_state.drawings_input = str(Path(globs[0]).parent)
+                    st.session_state.pop("config_needs", None)
+                else:                                   # a portable config, or one from another computer
+                    st.session_state.input_mode = "Upload files"
+                    st.session_state.config_needs = config_step.name
+                st.session_state.config_map = loaded.get("drawing_map") or {}
+                st.session_state.config_extra = loaded.get("extra") or []
+                st.session_state.axis = loaded.get("axis", "z")
+                st.session_state.contact_tol = float(loaded.get("contact_tol", 0.02))
+                st.session_state.sigma_level = float(loaded.get("sigma_level", 3.0))
+                st.session_state.follow_drawing = bool(loaded.get("general_from_drawing", True))
+                spec = loaded.get("spec") or {}
+                if spec.get("lsl") is not None:
+                    st.session_state.lsl = float(spec["lsl"])
+                if spec.get("usl") is not None:
+                    st.session_state.usl = float(spec["usl"])
+                st.session_state.ta_type = TYPES[1] if loaded.get("type") == "gap" else TYPES[0]
+                st.session_state.pending_config = loaded
+                reset_chain()
+                if st.session_state.get("config_needs"):
+                    st.success("Config loaded - now upload its STEP file and drawings below.")
+                else:
+                    st.success("Config loaded - check the faces, then build the chain.")
         except (ValueError, KeyError, yaml.YAMLError) as err:
             st.error(f"Could not load this config: {err}")
 
     st.header("1. Files")
-    mode = st.radio("Input", ["Upload files", "Path on this computer", "Demo assembly"], horizontal=False,
+    mode = st.radio("Input", ["Upload files", "Path on this computer", "Demo assembly", HAND], horizontal=False,
                     key="input_mode",
-                    help="The demo is a 5-part box stack with 2D drawings - a quick way to see every step.")
+                    help="The demo is a 5-part box stack with 2D drawings - a quick way to see every step. "
+                         "Rows by hand: type the rows of a stack the 3D chain does not cover (a radial "
+                         "squeeze, a locating fit) - no STEP needed.")
     step_path, drawings, drawing_globs = None, [], []
     steps: list[str] = []                       # every STEP found in what was handed over, largest first
     portable = mode != "Path on this computer"  # the config then names the files instead of pointing at them
@@ -315,7 +551,7 @@ with st.sidebar:
         elif beside:
             drawings = beside
             st.caption(f"{len(drawings)} PDF drawings found with the STEP")
-    else:
+    elif mode == "Demo assembly":
         demo_step, drawings = demo_files()
         step_path = Path(demo_step)
         st.caption("Demo: pick POST top -> CAP_TOP top for the +1.6 step.")
@@ -333,7 +569,8 @@ with st.sidebar:
         step_path = Path(steps[0])
 
     st.header("Settings")
-    axis = st.selectbox("Stack-up direction (axis)", ["z", "y", "x"], key="axis", on_change=reset_chain)
+    axis = st.selectbox("Stack-up direction (axis)", ["z", "y", "x"], key="axis", on_change=reset_chain,
+                        disabled=mode == HAND)
     contact_tol = st.number_input("Contact tolerance (mm)", 0.001, 1.0, 0.02, 0.005, format="%.3f",
                                   help="Two faces closer than this count as touching. Raise it if a contact "
                                        "is missed because of a small modelling gap.", key="contact_tol",
@@ -355,6 +592,10 @@ with st.sidebar:
                "Table below: used for every dimension without its own tolerance.")
     general = st.data_editor(pd.DataFrame(DEFAULT_GENERAL_TABLE, columns=["from mm", "to mm", "± tol"]),
                              num_rows="dynamic", key="general")
+
+if mode == HAND:
+    hand_page([tuple(r) for r in general.dropna().values.tolist()] or DEFAULT_GENERAL_TABLE, sigma_level)
+    st.stop()
 
 if step_path is None:
     st.info("Upload a STEP assembly (files, a folder or a zip), type its path, or choose **Demo assembly** in the "
@@ -645,20 +886,7 @@ except ValueError as err:
     st.error(str(err))
     st.stop()
 st.header("4. Result")
-has_spec = lsl is not None or usl is not None
-m = st.columns(3)
-m[0].metric("Nominal", f"{result.nominal:+.3f}", help=f"mean with asymmetric tolerances {result.mean:+.3f}")
-m[1].metric("Worst case", f"{result.wc_min:+.3f} ~ {result.wc_max:+.3f}",
-            help=f"WC verdict {result.verdict('wc') if has_spec else 'no spec'}")
-m[2].metric(f"RSS ({sigma_level:g}σ)", f"{result.rss_min:+.3f} ~ {result.rss_max:+.3f}")
-m = st.columns(3)
-m[0].metric("RSS verdict", result.verdict("rss") if has_spec else "no spec")
-m[1].metric("Cpk", "-" if result.cpk is None else f"{result.cpk:.2f}",
-            help="Cpk >= 1.33 is a common target. From the mean and sigma of the sum."
-            + ("" if result.yield_pct is None else f" Predicted yield {result.yield_pct:.4f} %."))
-m[2].metric("Monte Carlo out of spec", f"{result.mc_out_pct:.3f} %" if has_spec else "-",
-            help=f"{result.mc_samples:,} samples, per-row distributions. Normal approximation: {result.ppm:.0f} ppm"
-            if result.ppm is not None else None)
+show_result_metrics(result, sigma_level)
 st.bar_chart(pd.DataFrame({"variance contribution %": result.contributions}, index=[c.label for c in contributors]))
 with st.expander("Sensitivity: which tolerance to tighten first"):
     tornado = pd.DataFrame(sensitivity(contributors, result)).drop(columns="index")

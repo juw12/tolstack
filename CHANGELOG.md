@@ -3,7 +3,23 @@
 All notable changes to tolstack. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/). Config files carry their own `version` (currently 1).
 
-## [Unreleased]
+## [0.8.0] - 2026-11-13
+
+The stack written by hand gets the web app, and the locating fits it needs can be found in the CAD.
+
+### Added
+- **Web app: Rows by hand (no STEP)**: a table for the rows (label, part, nominal, tolerances, direction,
+  `diameter`, distribution), LSL / USL, measured groups and a limit typed in or fitted from test points.
+  **Calculate** runs the same pipeline as `tolstack run` (same numbers, Excel and pictures); the analysis downloads
+  as a config, and a saved config with `rows` now loads into this page instead of being refused.
+- **`tolstack fits model.step A B`**: locating fits between two parts across the stack axis - coaxial bore / shaft
+  pairs (radial clearance, interference below 0) and facing side walls (clearance per side, total float per
+  direction). `--rows` prints each fit as two hand-written rows (slot / bore +1, tongue / shaft -1, both
+  `diameter: true`), so the one-side float (S - T) / 2 enters the stack with the tolerances of both sizes.
+- `tolstack.fits`: `find_fits`, `pick_part` (refuses an ambiguous part name instead of taking the first match).
+
+### Changed
+- The result metrics of the web app are drawn by one function for both modes.
 
 ### Fixed
 - **AICC deploys were blocked by the server security scan** (ERROR `dangerous-subprocess-use-audit` on the Creo

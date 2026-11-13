@@ -10,7 +10,7 @@ git clone https://github.com/juw12/tolstack.git
 cd tolstack
 python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -e ".[app,dev]"
-pytest -q                                         # 133 tests, about two minutes
+pytest -q                                         # 141 tests, about two minutes
 ruff check . && mypy                              # lint and types, both run in CI
 streamlit run app.py
 ```

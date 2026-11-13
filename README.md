@@ -47,7 +47,7 @@ Try it in one command: `python -m tolstack demo tolstack_demo --run` (writes a d
 You stay in control: the chain is an editable table, so you can change values, flip a direction, or add
 rows the CAD cannot see, such as PCB bow, switch travel, assembly float or glue thickness.
 
-### Without a STEP file, and after the stack-up (command line)
+### Without a STEP file, and after the stack-up
 
 Some stacks are not a chain of flat faces: the radial squeeze of a seal ring, a pin in a hole, a fit
 between two diameters. For those, write the rows yourself in a config (`rows`) and run it the same way:
@@ -58,6 +58,10 @@ between two diameters. For those, write the rows yourself in a config (`rows`) a
   the diameter with `diameter: true`. The tolerance is looked up at the diameter, then size and tolerance are halved.
 - **A locating fit** (pilot / spigot, pin / hole) is two rows with opposite directions. With equal nominals
   they cancel in the result and only add their tolerance - the usual contributor that is missing from a first stack.
+- **Finding the locating fits in the CAD**: `tolstack fits model.step PART_A PART_B` looks for coaxial bore / shaft
+  pairs and facing side walls between two parts across the stack axis, and reports the clearance on each side and
+  the total float per direction. `--rows` prints the fits as two rows each (`diameter: true`, so the one-side
+  float is (slot - tongue) / 2), ready to paste under `rows` or `extra`.
 - **Measured parts** (`measured`): groups of readings, such as failed and good units, are placed against the
   RSS and worst-case range: inside or outside, and how many readings are beyond the limit.
 - **A limit** (`limit`): the result that still works, typed in or **fitted from test points** (x = the stack
@@ -68,7 +72,8 @@ between two diameters. For those, write the rows yourself in a config (`rows`) a
 
 The Excel file gets a **Measured** sheet (live: it reads the stack from the Stack-up sheet, the readings and the
 fit points are inputs, the limit is `SLOPE` / `INTERCEPT`) and a **Chart** sheet. Try it:
-`python -m tolstack run examples/seal_squeeze_config.yaml`.
+`python -m tolstack run examples/seal_squeeze_config.yaml`, or in the web app choose **Rows by hand (no STEP)**
+and **Fill in the example**.
 
 ## Install
 
@@ -121,6 +126,11 @@ streamlit run app.py
    (`drawings/`) instead of a path on one computer, so it runs from any folder that holds those files.
 6. Optional: "GD&T on the drawings" adds a callout as a row; "Sensitivity" shows what each row does to the result.
 
+**Rows by hand (no STEP)** in the sidebar opens a table for a stack written by hand: label, part, nominal,
+tolerances, direction, `diameter` and distribution per row, LSL / USL, and (optional) measured groups and a
+functional limit - typed in or fitted from test points. **Calculate** gives the same result, Excel and pictures
+as `tolstack run`; the analysis downloads as a config. A saved config with `rows` loads straight into this page.
+
 Each browser session works in its own folder on the server; folders idle for a day are removed.
 
 ### Command line / batch
@@ -131,9 +141,10 @@ python -m tolstack faces examples/demo/demo_assembly.step --axis z     # parts, 
 python -m tolstack paths examples/demo_config.yaml                     # candidate chains
 python -m tolstack run examples/demo_config.yaml                       # -> examples/out/demo_ta.xlsx
 python -m tolstack run examples/seal_squeeze_config.yaml               # hand-written rows, no STEP -> Excel + 2 PNG
+python -m tolstack fits model.step COVER FRAME --rows                  # locating fits between two parts -> rows
 ```
 
-After `pip install -e .` the same commands work as `tolstack demo|faces|paths|run`.
+After `pip install -e .` the same commands work as `tolstack demo|faces|paths|fits|run`.
 
 ### Config file (version 1)
 
@@ -179,8 +190,11 @@ and `examples/seal_squeeze_config.yaml`.
   practice, but it is still an assumption, and the report says so in the source column.
 - Cp/Cpk and ppm assume the sum is normally distributed; Monte Carlo uses the per-row distributions.
 - **Hand-written rows are not checked against any 3D.** The signs and the list of rows are yours; a missing
-  contributor (a locating fit, a float) makes the range too narrow. They run from the command line only; the web app
-  needs a STEP file.
+  contributor (a locating fit, a float) makes the range too narrow.
+- **`tolstack fits`** reads axis-aligned geometry only: cylinders whose axis runs along the stack axis and walls
+  whose normal is X, Y or Z. Two walls overlap when their bounding boxes do, so an L-shaped or holed face can be
+  listed although the walls do not really face each other - check it in a section. Drafted (tapered) walls are
+  not planar-normal to X / Y and are not found. The direction of the two rows depends on your stack: check it.
 - A **fitted limit** is a straight line through your test points. Read R² on the Measured sheet, and do not use the
   limit outside the tested range. The % beyond the limit assumes a normal sum, like ppm.
 - Results are an engineering estimate. They do not replace a formal tolerance analysis or measured data (FAI/CPK).
