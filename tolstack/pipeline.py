@@ -53,8 +53,14 @@ class Model:
         return describe_face(face, self.parts)
 
 
-def load_model(step_path: str, axis: str = "z", contact_tol: float = 0.02) -> Model:
-    parts = load_step(step_path)
+def load_model(step_path: str, axis: str = "z", contact_tol: float = 0.02,
+               parts: list[Part] | None = None) -> Model:
+    """Faces normal to `axis` and contacts of a STEP assembly.
+
+    parts   the solids of that STEP when already read (load_step), so a new axis or contact tolerance does
+            not read a large file again; read here when None.
+    """
+    parts = load_step(step_path) if parts is None else parts
     faces = [f for p in parts for f in planar_faces(p, axis)]
     if not parts:
         raise ValueError(f"no solids found in {step_path}; is it an assembly STEP (AP203/AP214/AP242)?")

@@ -3,6 +3,38 @@
 All notable changes to tolstack. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/). Config files carry their own `version` (currently 1).
 
+## [0.5.0] - 2026-11-13
+
+Tuned on 44 real project hand-over folders ("16 交接時的最新版本3D圖面"): 19,327 files, of which 66 loose STEP
+files (largest 549 MB), 61 zip / 7z archives (54 of them hold a STEP), 1,488 Creo assemblies and 15,991 Creo parts.
+
+### Added
+- **Uploads up to 2 GB per file** (was Streamlit's 200 MB). Large uploads are written to disk in 1 MB chunks
+  instead of being copied in memory.
+- **7z archives**, uploaded or typed as a path, like zip (STEP and PDF only are unpacked).
+- **A folder is searched inside its zip / 7z files too** ("Path on this computer"). Each archive is unpacked once
+  into a cache; an archive without STEP or PDF is listed, not unpacked.
+- **Repeated STEP files are dropped**: the same file loose and inside an archive (same name and size) shows once.
+- **Newest full assembly first**: of the STEP files at least half the size of the largest, the one with the newest
+  date in its name (20260805, 260909 or 0903) is the default; the list shows size and folder of each file.
+- **Native Creo / Pro-E files** (`.prt.12`, `.asm.3`, `.drw`) are recognised and counted, with the export-to-STEP
+  steps, instead of a bare "no STEP file".
+- **The 2D folder next to the 3D folder** (`17 ... -2D` beside `16 ... 3D`, found in 41 of the 44 hand-overs) is
+  used for the drawings when no drawings folder is given.
+
+- **The STEP file is read once per file**: a new stack-up axis or contact tolerance reuses the parts already
+  read (before, every change read the whole file again - minutes for a hand-over assembly).
+
+### Checked on real data
+- ZIRIS hand-over STEP `Ziris_system_all_40mm_spk_asm20260716.stp` (66.5 MB, mm): 504 parts, 5,848 faces normal
+  to Z, peak memory 436 MB. Folder scan of the ZIRIS, Lory3, NS300 and PD160 hand-overs: the STEP inside their
+  7z / zip files is found, repeats dropped, the 2D folder paired (72, 100, 15, 15 PDFs), the Creo-only PD160
+  folder explained (3,982 parts, 482 assemblies).
+
+### Changed
+- `py7zr` is a new dependency.
+- `find_inputs` drops repeats; `extract_zip` is now `extract_archive` (the old name still works).
+
 ## [0.4.0] - 2026-11-13
 
 ### Added

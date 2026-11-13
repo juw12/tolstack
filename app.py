@@ -8,9 +8,20 @@ import pandas as pd
 import streamlit as st
 import yaml
 
+from tolstack.cad import load_step
 from tolstack.chain import build_chain, find_paths
 from tolstack.excel import write_report
-from tolstack.intake import extract_zip, find_inputs, sync_inbox
+from tolstack.intake import (
+    assembly_order,
+    extract_archive,
+    find_inputs,
+    is_archive,
+    native_kind,
+    native_note,
+    scan_folder,
+    sibling_drawing_folder,
+    sync_inbox,
+)
 from tolstack.pipeline import (
     CONFIG_VERSION,
     apply_tolerances,
@@ -36,7 +47,10 @@ with st.expander("How it works / what to prepare"):
         "**You need** one assembly STEP file (AP203 / AP214 / AP242, parts as separate solids, in their "
         "assembled position). **Optional:** the 2D drawings as PDF, one per part, named like the part "
         "(`SPACER.pdf` for part `SPACER`).\n\n"
-        "1. **Files** (sidebar) - upload the STEP and PDFs as files, as a whole folder or as one zip, or try "
+        "1. **Files** (sidebar) - upload the STEP and PDFs as files, as a whole folder or as one zip / 7z "
+        "(up to 2 GB per file), or type the path of a hand-over folder on your PC: the STEP inside its zip / "
+        "7z files is found too, and the '17 ... 2D' folder next to a '16 ... 3D' folder is used for the "
+        "drawings. Native Creo files (.prt / .asm) can not be read - export the assembly as STEP. Or try "
         "the *Demo assembly*.\n"
         "2. **What to analyze** - pick the stack-up axis, then for *From* and *To* the part and its face. The "
         "3D view marks both parts and both faces while you choose. The result is the distance To - From along "
@@ -65,9 +79,15 @@ NUMERIC = ["nominal", "tol_plus", "tol_minus"]
 TYPES = ["Step (offset / flush between two faces)", "Gap (clearance between two faces)"]
 
 
-@st.cache_resource(show_spinner="Reading STEP and finding contacts...")
+@st.cache_resource(show_spinner="Reading the STEP file - a hand-over assembly of 50-150 MB takes minutes; "
+                                "it is read once per file, a new axis or contact tolerance reuses it...")
+def cached_parts(step_path: str, mtime: float):
+    return load_step(step_path)
+
+
+@st.cache_resource(show_spinner="Finding faces and contacts...")
 def cached_model(step_path: str, axis: str, contact_tol: float, mtime: float):
-    return load_model(step_path, axis, contact_tol)
+    return load_model(step_path, axis, contact_tol, parts=cached_parts(step_path, mtime))
 
 
 @st.cache_resource(show_spinner="Writing the demo assembly...")
@@ -92,6 +112,15 @@ def reread_tolerances():
 
 def safe_name(text: str) -> str:
     return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in text).strip("_") or "analysis"
+
+
+UPLOAD_LIMIT_MB = int(st.get_option("server.maxUploadSize"))
+
+
+def step_label(step: str) -> str:
+    """Name, size and the folder it came from, so two STEP files of the same name can be told apart."""
+    path = Path(step)
+    return f"{path.name}  ({path.stat().st_size / 1e6:.1f} MB, in {path.parent.name})"
 
 
 # ---------------------------------------------------------------- 1. input files
@@ -143,18 +172,20 @@ with st.sidebar:
     steps: list[str] = []                       # every STEP found in what was handed over, largest first
     portable = mode != "Path on this computer"  # the config then names the files instead of pointing at them
     if mode == "Upload files":
-        kinds = ["step", "stp", "pdf", "zip"]
-        files = st.file_uploader("STEP assembly and 2D drawings (PDF) - or one zip of them", type=kinds,
+        kinds = ["step", "stp", "pdf", "zip", "7z"]
+        files = st.file_uploader(f"STEP assembly and 2D drawings (PDF) - or one zip / 7z of them "
+                                 f"(up to {UPLOAD_LIMIT_MB / 1024:g} GB per file)", type=kinds,
                                  accept_multiple_files=True,
                                  help="One assembly STEP with every part as its own solid, in the assembled "
                                       "position, plus the part drawings. Drawings are matched to parts by file "
-                                      "name, e.g. SPACER.pdf -> part SPACER. A zip is unpacked here (STEP and PDF "
-                                      "only, sub-folders included). Files stay in a private temporary folder and "
-                                      "are deleted after a day without use.")
+                                      "name, e.g. SPACER.pdf -> part SPACER. A zip or 7z is unpacked here (STEP and "
+                                      "PDF only, sub-folders included). Files stay in a private temporary folder "
+                                      "and are deleted after a day without use. For very large STEP files on your "
+                                      "own PC, 'Path on this computer' is faster: nothing is copied.")
         folder_files = st.file_uploader("... or a whole folder", type=kinds, accept_multiple_files="directory",
-                                        help="Pick the project folder: every STEP, PDF and zip in it and in its "
-                                             "sub-folders is uploaded.")
-        uploads = {u.file_id: (u.name, u.getvalue) for u in [*(files or []), *(folder_files or [])]}
+                                        help="Pick the project folder: every STEP, PDF, zip and 7z in it and in its "
+                                             "sub-folders is uploaded. Native Creo files are skipped.")
+        uploads = {u.file_id: (u.name, u) for u in [*(files or []), *(folder_files or [])]}
         for problem in sync_inbox(WORK / "inbox", uploads):
             st.error(problem)
         steps, drawings = find_inputs(WORK / "inbox")
@@ -162,49 +193,70 @@ with st.sidebar:
             st.info(f"The loaded config expects **{st.session_state.config_needs}** - upload it here, "
                     "with the same drawings.")
         elif uploads and not steps:
-            st.warning("No STEP file in the upload yet.")
+            st.warning("No STEP file in the upload yet. Native Creo / Pro-E files (.prt, .asm) can not be read: "
+                       "export the top assembly as STEP first.")
         if drawings:
             st.caption(f"{len(drawings)} PDF drawings")
     elif mode == "Path on this computer":
-        typed = st.text_input("STEP file, folder or zip", key="step_input",
-                              help="A path this app can read: on your own PC when you run it locally. A folder or "
-                                   "a zip is searched for the STEP and the PDF drawings, sub-folders included. "
+        typed = st.text_input("STEP file, folder, zip or 7z", key="step_input",
+                              help="A path this app can read: on your own PC when you run it locally. A folder, zip "
+                                   "or 7z is searched for the STEP and the PDF drawings, sub-folders and the "
+                                   "archives inside the folder included. Point it at a hand-over '16 ... 3D' "
+                                   "folder and the '17 ... 2D' folder next to it is used for the drawings. "
                                    "On a shared server use Upload files.")
         folder = st.text_input("2D drawings folder (optional)", key="drawings_input",
-                               help="Only needed when the drawings are not in the folder or zip above.")
+                               help="Only needed when the drawings are not in the folder above or in the "
+                                    "'17 ... 2D' folder next to it.")
         source = Path(typed.strip().strip('"')) if typed.strip() else None
         beside: list[str] = []                  # the PDFs that came with the STEP
         if source is None:
             pass
         elif source.is_dir():
-            steps, beside = find_inputs(source)
+            with st.spinner("Looking through the folder (archives are unpacked once)..."):
+                found = scan_folder(source, WORK / "archives")
+            steps, beside = found.steps, found.pdfs
             drawing_globs = [str(source / "*.pdf"), str(source / "**" / "*.pdf")]
+            for note in found.notes:
+                st.caption(note)
             if not steps:
-                st.error("No STEP file in this folder.")
-        elif source.is_file() and source.suffix.lower() == ".zip":
-            unpacked = WORK / "zip" / f"{safe_name(source.stem)}_{int(source.stat().st_mtime)}"
+                st.error("No STEP file in this folder or in its zip / 7z files."
+                         + (f" It has {native_note(found.native)}." if found.native else ""))
+            elif found.native:
+                st.caption(f"Skipped: {native_note(found.native)}.")
+        elif source.is_file() and is_archive(source):
+            stat = source.stat()
+            unpacked = WORK / "archives" / f"{safe_name(source.stem)}_{stat.st_size}_{int(stat.st_mtime)}"
             try:
                 if not unpacked.exists():       # unpack once: a rewritten STEP would be read again on every rerun
-                    extract_zip(source, unpacked)
+                    with st.spinner(f"Unpacking {source.name}..."):
+                        extract_archive(source, unpacked)
                 steps, beside = find_inputs(unpacked)
                 portable = True
                 if not steps:
-                    st.error("No STEP file in this zip.")
+                    st.error(f"No STEP file in this {source.suffix.lstrip('.')} - native Creo / Pro-E files "
+                             "can not be read; export the top assembly as STEP.")
             except (ValueError, OSError) as err:
                 shutil.rmtree(unpacked, ignore_errors=True)
-                st.error(f"Could not open this zip: {err}")
+                st.error(f"Could not open this archive: {err}")
+        elif source.is_file() and native_kind(source.name):
+            st.error(f"{source.name} is a native Creo / Pro-E file. tolstack reads STEP: in Creo open the top "
+                     "assembly, File > Save As > Save a Copy, type STEP, and use that file.")
         elif source.is_file():
             steps = [str(source)]
         else:
             st.error("Path not found - check it (quotes are fine).")
-        if folder:
-            root = Path(folder.strip().strip('"'))
+        paired = None
+        if not folder and source is not None and source.exists():
+            paired = sibling_drawing_folder(source)
+        if folder or paired:
+            root = Path(folder.strip().strip('"')) if folder else paired
             if not root.is_dir():
                 st.error("Drawings folder not found.")
             else:
                 drawing_globs = [str(root / "*.pdf"), str(root / "**" / "*.pdf")]
-                drawings = sorted(expand_drawings(drawing_globs, Path(".")))
-                st.caption(f"{len(drawings)} PDF drawings found")
+                drawings = sorted(set(expand_drawings(drawing_globs, Path(".")) + beside))
+                where = "found" if folder else f"found, from the 2D folder next to it: {root.name}"
+                st.caption(f"{len(drawings)} PDF drawings {where}")
         elif beside:
             drawings = beside
             st.caption(f"{len(drawings)} PDF drawings found with the STEP")
@@ -212,14 +264,16 @@ with st.sidebar:
         demo_step, drawings = demo_files()
         step_path = Path(demo_step)
         st.caption("Demo: pick POST top -> CAP_TOP top for the +1.6 step.")
+    steps = assembly_order(steps)
     if len(steps) > 1:
         if st.session_state.get("step_pick") not in steps:
             st.session_state.pop("step_pick", None)
         expected = st.session_state.get("config_needs", "")
         step_path = Path(st.selectbox(
-            f"Assembly STEP ({len(steps)} found, largest first)", steps, key="step_pick", on_change=reset_chain,
+            f"Assembly STEP ({len(steps)} found, newest full assembly first)", steps, key="step_pick",
+            on_change=reset_chain,
             index=next((i for i, s in enumerate(steps) if Path(s).name == expected), 0),
-            format_func=lambda s: f"{Path(s).name}  ({Path(s).stat().st_size / 1e6:.1f} MB)"))
+            format_func=step_label))
     elif steps:
         step_path = Path(steps[0])
 

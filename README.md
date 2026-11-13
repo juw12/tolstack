@@ -75,8 +75,11 @@ for OCR of drawings without a text layer.
 streamlit run app.py
 ```
 
-1. Sidebar: **Demo assembly** (to try it), upload the STEP and 2D PDFs - as loose files, a whole folder or one zip -
-   **or** type the path to a STEP, a folder or a zip on this computer.
+1. Sidebar: **Demo assembly** (to try it), upload the STEP and 2D PDFs - as loose files, a whole folder or one
+   zip / 7z, up to 2 GB per file - **or** type the path to a STEP, a folder, a zip or a 7z on this computer.
+   Pointed at a project hand-over folder (`16 ... 3D`), tolstack also looks inside its zip / 7z files, drops
+   repeated copies of the same STEP, offers the newest full assembly first, says how many native Creo files
+   (`.prt.N`, `.asm.N`) it skipped, and takes the drawings from the `17 ... 2D` folder next to it.
    A saved YAML config can be loaded at the top of the sidebar to restore an analysis.
 2. Choose **Step** or **Gap**, then the *From* part + face and the *To* part + face; set LSL/USL (optional).
    The **3D view** next to the lists highlights the picked parts and faces and follows every change (toggle it off
