@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tolstack"
-version = "0.5.0"
+version = "0.6.0"
 description = "1-D tolerance stack-up (gap / step) from a STEP assembly and 2D drawings, exported to Excel"
 readme = "README.md"
 license = {text = "MIT"}

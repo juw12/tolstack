@@ -3,6 +3,29 @@
 All notable changes to tolstack. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/). Config files carry their own `version` (currently 1).
 
+## [0.6.0] - 2026-11-13
+
+### Added
+- **Native Creo / Pro-E assemblies are converted to STEP** with the Creo Parametric installed on the PC
+  ("Path on this computer"): the assemblies of the folder are listed (newest version of each, most likely top
+  assembly first, with how many sub-assemblies and parts it names), and *Convert with Creo* runs Creo in the
+  background (no window) with a trail file: open, Save a Copy as STEP, exit. The newest version of every file it
+  needs is copied to a private job folder first, so the user's folder is never written and paths with Chinese
+  characters do not stop Creo. The STEP joins the assembly list and is reused on the next run. Creo is found in
+  `C:/D:/E:\PTC\Creo *` and `Program Files\PTC`, or set `TOLSTACK_CREO`.
+- A Creo license refusal (user / host on the license server's EXCLUDE list, or not on its INCLUDE list) is shown
+  as such, with who to ask, instead of "no STEP".
+- **Memory guard for the server** (`tolstack/resources.py`): the container memory limit is read from the cgroup;
+  a STEP file that would not fit is refused with a message before it is read (instead of the pod being killed for
+  every user), and the largest upload is sized from the limit (about 110 MB of STEP in a 1 GiB pod, 2 GB on a PC).
+  Measured: a 9.7 MB assembly needs +95 MB, a 66.5 MB one +220 MB while it is read.
+- At most 2 STEP files and 3 models stay cached in memory at once.
+
+### Not done (on purpose)
+- Creo files are not decoded directly. Their geometry is PTC's own compressed binary format; a guessed surface or
+  offset would give a wrong stack-up without any warning. Creo itself (or a STEP export) stays the source.
+- On the shared server (Linux, no Creo) Creo files are listed with the export steps; conversion needs a PC with Creo.
+
 ## [0.5.0] - 2026-11-13
 
 Tuned on 44 real project hand-over folders ("16 交接時的最新版本3D圖面"): 19,327 files, of which 66 loose STEP

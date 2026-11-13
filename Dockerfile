@@ -25,4 +25,6 @@ ENV PYTHONDONTWRITEBYTECODE=1 \
 
 USER appuser
 EXPOSE 8501
-CMD ["streamlit", "run", "app.py", "--server.port=8501", "--server.address=0.0.0.0", "--server.headless=true"]
+# The largest upload follows the container memory limit (cgroup): a 1 GiB pod takes STEP files up to about
+# 100 MB, a bigger pod more. See tolstack/resources.py.
+CMD ["sh", "-c", "exec streamlit run app.py --server.port=8501 --server.address=0.0.0.0 --server.headless=true --server.maxUploadSize=$(python -m tolstack.resources max-upload-mb)"]

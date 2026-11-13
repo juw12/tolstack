@@ -2,7 +2,7 @@
 
 Built around real project hand-over folders ("16 ... 3D", "17 ... 2D"): the STEP assembly often sits next to
 a .7z or .zip holding the same or a newer STEP, next to hundreds of native Creo / Pro-E files (.prt.12,
-.asm.3) that tolstack can not read, and the part drawings are in a sibling "2D" folder.
+.asm.3; tolstack.creo converts them with an installed Creo), and the part drawings are in a sibling "2D" folder.
 """
 from __future__ import annotations
 
@@ -312,8 +312,9 @@ def native_note(native: Mapping[str, int]) -> str | None:
     if not native:
         return None
     counts = ", ".join(f"{n} {kind}" for kind, n in sorted(native.items(), key=lambda kv: -kv[1]))
-    return (f"native Creo / Pro-E files ({counts}) can not be read here - tolstack reads STEP. In Creo open the "
-            "top assembly, File > Save As > Save a Copy, type STEP, and add that file (or zip / 7z it)")
+    return (f"native Creo / Pro-E files ({counts}) - tolstack reads STEP: on a PC with Creo use 'Path on this "
+            "computer' and Convert with Creo, or in Creo open the top assembly, File > Save As > Save a Copy, "
+            "type STEP, and add that file (or zip / 7z it)")
 
 
 def sibling_drawing_folder(path: str | Path, levels: int = 3) -> Path | None:

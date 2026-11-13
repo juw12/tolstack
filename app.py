@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 import yaml
 
+from tolstack import creo
 from tolstack.cad import load_step
 from tolstack.chain import build_chain, find_paths
 from tolstack.excel import write_report
@@ -17,7 +18,6 @@ from tolstack.intake import (
     find_inputs,
     is_archive,
     native_kind,
-    native_note,
     scan_folder,
     sibling_drawing_folder,
     sync_inbox,
@@ -32,6 +32,7 @@ from tolstack.pipeline import (
     resolve_drawing_map,
     validate_config,
 )
+from tolstack.resources import check_step
 from tolstack.stack import DISTRIBUTIONS, Contributor, analyze, is_extra, sensitivity
 from tolstack.tolerances import DEFAULT_GENERAL_TABLE, tesseract_available
 from tolstack.view3d import VIEWS, scene_figure
@@ -50,8 +51,9 @@ with st.expander("How it works / what to prepare"):
         "1. **Files** (sidebar) - upload the STEP and PDFs as files, as a whole folder or as one zip / 7z "
         "(up to 2 GB per file), or type the path of a hand-over folder on your PC: the STEP inside its zip / "
         "7z files is found too, and the '17 ... 2D' folder next to a '16 ... 3D' folder is used for the "
-        "drawings. Native Creo files (.prt / .asm) can not be read - export the assembly as STEP. Or try "
-        "the *Demo assembly*.\n"
+        "drawings. Native Creo / Pro-E files (.prt / .asm): with *Path on this computer* on a PC that has Creo "
+        "installed, pick the assembly and press *Convert with Creo* - Creo saves a STEP copy in the background "
+        "(your folder is not changed). Or try the *Demo assembly*.\n"
         "2. **What to analyze** - pick the stack-up axis, then for *From* and *To* the part and its face. The "
         "3D view marks both parts and both faces while you choose. The result is the distance To - From along "
         "that axis: a step (flush / offset) or a gap (clearance).\n"
@@ -79,13 +81,13 @@ NUMERIC = ["nominal", "tol_plus", "tol_minus"]
 TYPES = ["Step (offset / flush between two faces)", "Gap (clearance between two faces)"]
 
 
-@st.cache_resource(show_spinner="Reading the STEP file - a hand-over assembly of 50-150 MB takes minutes; "
+@st.cache_resource(max_entries=2, show_spinner="Reading the STEP file - a hand-over assembly of 50-150 MB takes minutes; "
                                 "it is read once per file, a new axis or contact tolerance reuses it...")
 def cached_parts(step_path: str, mtime: float):
     return load_step(step_path)
 
 
-@st.cache_resource(show_spinner="Finding faces and contacts...")
+@st.cache_resource(max_entries=3, show_spinner="Finding faces and contacts...")
 def cached_model(step_path: str, axis: str, contact_tol: float, mtime: float):
     return load_model(step_path, axis, contact_tol, parts=cached_parts(step_path, mtime))
 
@@ -121,6 +123,47 @@ def step_label(step: str) -> str:
     """Name, size and the folder it came from, so two STEP files of the same name can be told apart."""
     path = Path(step)
     return f"{path.name}  ({path.stat().st_size / 1e6:.1f} MB, in {path.parent.name})"
+
+
+CREO_EXE = creo.find_creo()
+
+
+def creo_panel(native_paths: list[Path], key: str) -> list[str]:
+    """List the Creo assemblies among `native_paths`; convert the chosen one to STEP with the local Creo.
+
+    Returns the STEP files converted so far for this folder (they join the assembly list).
+    """
+    files = creo.latest_versions(native_paths)
+    found = creo.assemblies(files)
+    done: dict[str, list[str]] = st.session_state.setdefault("creo_steps", {})
+    converted = [s for s in done.get(key, []) if Path(s).is_file()]
+    if not found:
+        return converted
+    summary = creo.summary(native_paths) or ""
+    if CREO_EXE is None:
+        st.caption(f"Native Creo files here ({summary}). Creo Parametric is not installed where this app runs, so "
+                   "they can not be converted here: run tolstack on a PC with Creo (start.bat), or export the top "
+                   "assembly as STEP in Creo (File > Save As > Save a Copy > STEP).")
+        return converted
+    with st.expander(f"Creo files: {summary}", expanded=not converted):
+        pick = st.selectbox("Creo assembly to convert", found, key=f"creo_pick_{key}",
+                            format_func=lambda a: a.label,
+                            help="Most likely top assembly first (its name says all / top / main, or it holds the "
+                                 "most sub-assemblies) - check it is the one you need.")
+        if st.button("Convert with Creo (STEP)", key=f"creo_go_{key}",
+                     help=f"Runs {CREO_EXE} in the background (no window). The newest version of every file is "
+                          "copied to a private folder first; your folder is not changed. A large assembly takes "
+                          "minutes."):
+            with st.spinner(f"Creo is exporting {pick.file.model} to STEP..."):
+                try:
+                    step = creo.export_step(pick.file, files, ROOT / "creo")
+                except creo.CreoError as err:
+                    st.error(str(err))
+                else:
+                    done[key] = [str(step), *[s for s in converted if s != str(step)]]
+                    converted = done[key]
+                    st.success(f"STEP written: {step.name} ({step.stat().st_size / 1e6:.1f} MB)")
+    return converted
 
 
 # ---------------------------------------------------------------- 1. input files
@@ -193,8 +236,9 @@ with st.sidebar:
             st.info(f"The loaded config expects **{st.session_state.config_needs}** - upload it here, "
                     "with the same drawings.")
         elif uploads and not steps:
-            st.warning("No STEP file in the upload yet. Native Creo / Pro-E files (.prt, .asm) can not be read: "
-                       "export the top assembly as STEP first.")
+            st.warning("No STEP file in the upload yet. Native Creo / Pro-E files (.prt, .asm) are not uploaded: "
+                       "on a PC with Creo use 'Path on this computer' and Convert with Creo, or export the top "
+                       "assembly as STEP first.")
         if drawings:
             st.caption(f"{len(drawings)} PDF drawings")
     elif mode == "Path on this computer":
@@ -218,11 +262,12 @@ with st.sidebar:
             drawing_globs = [str(source / "*.pdf"), str(source / "**" / "*.pdf")]
             for note in found.notes:
                 st.caption(note)
+            if found.native:
+                native_paths = [p for p in Path(source).rglob("*") if native_kind(p.name) and p.is_file()]
+                steps = creo_panel(native_paths, str(source)) + steps
             if not steps:
                 st.error("No STEP file in this folder or in its zip / 7z files."
-                         + (f" It has {native_note(found.native)}." if found.native else ""))
-            elif found.native:
-                st.caption(f"Skipped: {native_note(found.native)}.")
+                         + ("" if found.native else " Add the assembly as STEP."))
         elif source.is_file() and is_archive(source):
             stat = source.stat()
             unpacked = WORK / "archives" / f"{safe_name(source.stem)}_{stat.st_size}_{int(stat.st_mtime)}"
@@ -239,8 +284,11 @@ with st.sidebar:
                 shutil.rmtree(unpacked, ignore_errors=True)
                 st.error(f"Could not open this archive: {err}")
         elif source.is_file() and native_kind(source.name):
-            st.error(f"{source.name} is a native Creo / Pro-E file. tolstack reads STEP: in Creo open the top "
-                     "assembly, File > Save As > Save a Copy, type STEP, and use that file.")
+            native_paths = [p for p in source.parent.iterdir() if native_kind(p.name) and p.is_file()]
+            steps = creo_panel(native_paths, str(source.parent))
+            if not steps:
+                st.info(f"{source.name} is a native Creo / Pro-E file: convert its assembly above, or type the "
+                        "folder that holds it.")
         elif source.is_file():
             steps = [str(source)]
         else:
@@ -306,8 +354,13 @@ if step_path is None:
             "sidebar to start.")
     st.stop()
 
+too_big = check_step(Path(step_path).stat().st_size)
+if too_big and st.session_state.get("model_key") != str(step_path):
+    st.error(too_big)
+    st.stop()
 try:
     model = cached_model(str(step_path), axis, float(contact_tol), Path(step_path).stat().st_mtime)
+    st.session_state.model_key = str(step_path)
 except Exception as err:  # noqa: BLE001 - show any CAD error as a message, not a traceback
     st.error(f"Could not read this STEP file: {err}")
     st.caption("tolstack needs an assembly STEP (AP203/AP214/AP242) with solid bodies.")
