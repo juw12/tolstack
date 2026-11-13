@@ -296,8 +296,11 @@ def export_step(assembly: CreoFile, files: Iterable[CreoFile], out_dir: str | Pa
     (job / "tolstack_export.txt").write_text(_trail(assembly.model, out_name), encoding="ascii", errors="replace")
     started = time.time()
     timed_out = False
+    # A fixed argument list, never a shell: the executable is the installed parametric.exe
+    # (or TOLSTACK_CREO) and the only argument is the trail file written above.
+    command = [str(creo_exe), "-g:no_graphics", "tolstack_export.txt"]
     try:
-        subprocess.run([str(creo_exe), "-g:no_graphics", "tolstack_export.txt"], cwd=job,
+        subprocess.run([*command], cwd=job,
                        timeout=timeout, check=False, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
                        stderr=subprocess.DEVNULL)    # no pipes: Creo's name server (nmsd) outlives it
     except subprocess.TimeoutExpired:
