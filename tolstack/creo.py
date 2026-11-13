@@ -274,6 +274,8 @@ def export_step(assembly: CreoFile, files: Iterable[CreoFile], out_dir: str | Pa
     if creo_exe is None or not creo_exe.is_file():
         raise CreoError("Creo Parametric was not found on this computer. Install it, or set TOLSTACK_CREO to "
                         "the full path of parametric.exe; or export the assembly as STEP in Creo yourself.")
+    if not creo_exe.name.lower().startswith("parametric"):
+        raise CreoError(f"{creo_exe} is not Creo Parametric; TOLSTACK_CREO must point to parametric.exe.")
     newest = needed_files(assembly, files)
     newer = too_new(newest, creo_exe)
     if newer:
@@ -296,13 +298,13 @@ def export_step(assembly: CreoFile, files: Iterable[CreoFile], out_dir: str | Pa
     (job / "tolstack_export.txt").write_text(_trail(assembly.model, out_name), encoding="ascii", errors="replace")
     started = time.time()
     timed_out = False
-    # A fixed argument list, never a shell: the executable is the installed parametric.exe
-    # (or TOLSTACK_CREO) and the only argument is the trail file written above.
-    command = [str(creo_exe), "-g:no_graphics", "tolstack_export.txt"]
     try:
-        subprocess.run([*command], cwd=job,
-                       timeout=timeout, check=False, stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL,
-                       stderr=subprocess.DEVNULL)    # no pipes: Creo's name server (nmsd) outlives it
+        # Audited: no shell, fixed arguments, and the program is the parametric.exe checked above. Creo
+        # must be started by its full path (it finds its install from argv[0]), so argv[0] can not be a
+        # literal. No pipes: Creo's name server (nmsd) outlives it and would hold them open.
+        command = [str(creo_exe), "-g:no_graphics", "tolstack_export.txt"]
+        subprocess.run(command, cwd=job, timeout=timeout, check=False,  # nosemgrep
+                       stdin=subprocess.DEVNULL, stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
     except subprocess.TimeoutExpired:
         timed_out = True
     except OSError as err:
