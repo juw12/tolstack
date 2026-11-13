@@ -1,5 +1,5 @@
 """Excel report: live formulas, verdicts, capability, contribution chart, section image,
-2D evidence, an assumptions sheet and a reviewer sign-off block.
+2D evidence, a sensitivity (tornado) sheet, an assumptions sheet and a reviewer sign-off block.
 
 Every number a reviewer may want to change (nominal, tolerances, direction, distribution,
 sigma level, spec limits) is an input cell; everything derived from them is a formula, so
@@ -17,7 +17,7 @@ from openpyxl.drawing.image import Image as XLImage
 from openpyxl.styles import Alignment, Border, Font, PatternFill, Side
 from openpyxl.worksheet.datavalidation import DataValidation
 
-from .stack import Contributor, Result
+from .stack import Contributor, Result, sensitivity
 
 HEADERS = ["Item", "Part", "Description", "Source", "Nominal", "+Tol", "-Tol", "Dir (+1/-1)", "Dist",
            "Mean shift", "Half range", "Signed mean", "Sigma", "Variance", "Contribution %"]
@@ -117,7 +117,8 @@ def write_report(path: str | Path, contributors: list[Contributor], result: Resu
         ("RSS verdict", f'=IF(AND(OR(B{s + 9}="",B{s + 7}>=B{s + 9}),OR(B{s + 10}="",B{s + 8}<=B{s + 10})),"PASS","FAIL")'),
         ("WC verdict", f'=IF(AND(OR(B{s + 9}="",B{s + 3}>=B{s + 9}),OR(B{s + 10}="",B{s + 4}<=B{s + 10})),"PASS","FAIL")'),
         ("Cp", f'=IF(OR(B{s + 9}="",B{s + 10}="",B{s + 5}=0),"",(B{s + 10}-B{s + 9})/(6*B{s + 5}))'),
-        ("Cpk", f'=IF(B{s + 5}=0,"",IF(AND(B{s + 9}="",B{s + 10}=""),"",MIN(IF(B{s + 10}="",1E+99,(B{s + 10}-B{s + 1})/(3*B{s + 5})),'
+        ("Cpk", f'=IF(B{s + 5}=0,"",IF(AND(B{s + 9}="",B{s + 10}=""),"",'
+                f'MIN(IF(B{s + 10}="",1E+99,(B{s + 10}-B{s + 1})/(3*B{s + 5})),'
                 f'IF(B{s + 9}="",1E+99,(B{s + 1}-B{s + 9})/(3*B{s + 5})))))'),
         ("Predicted out of spec (ppm)", f'=IF(B{s + 5}=0,"",1000000*(IF(B{s + 9}="",0,NORMSDIST((B{s + 9}-B{s + 1})/B{s + 5}))'
                                         f'+IF(B{s + 10}="",0,1-NORMSDIST((B{s + 10}-B{s + 1})/B{s + 5}))))'),
@@ -178,6 +179,7 @@ def write_report(path: str | Path, contributors: list[Contributor], result: Resu
     ws.sheet_properties.pageSetUpPr.fitToPage = True
     ws.print_title_rows = f"{head}:{head}"
 
+    _sensitivity_sheet(wb, contributors, result, first, last, rss_row=s + 6, sigma_cell=sigma_cell)
     _assumptions_sheet(wb, meta, result)
 
     refs = [c for c in contributors if c.ref_image and Path(c.ref_image).exists()]
@@ -187,12 +189,75 @@ def write_report(path: str | Path, contributors: list[Contributor], result: Resu
         ws2["A1"].font = Font(size=14, bold=True)
         row = 3
         for c in refs:
-            ws2.cell(row, 1, f"{c.label}  {c.part}: {c.nominal} +{c.tol_plus}/-{c.tol_minus}  ({c.source})").font = Font(bold=True)
+            title = f"{c.label}  {c.part}: {c.nominal} +{c.tol_plus}/-{c.tol_minus}  ({c.source})"
+            ws2.cell(row, 1, title).font = Font(bold=True)
             img = _fit_image(c.ref_image, 900)
             ws2.add_image(img, f"A{row + 1}")
             row += int(img.height / 20) + 3
     wb.save(str(path))
     return str(path)
+
+
+def _sensitivity_sheet(wb, contributors: list[Contributor], result: Result, first: int, last: int,
+                       rss_row: int, sigma_cell: str) -> None:
+    """Tornado table and chart. The row order is fixed at export (largest variance share first);
+    every number is a formula on the Stack-up sheet, so it follows edits made there."""
+    ws = wb.create_sheet("Sensitivity")
+    ws["A1"] = "Sensitivity - which tolerance moves the result most"
+    ws["A1"].font = Font(size=14, bold=True)
+    ws["A2"] = ("Low / High = shift of the result when that row alone sits at its lower / upper limit. "
+                "'RSS ± without' = the RSS band if the row had no tolerance; 'Gain' = what tightening it to zero "
+                "would buy. Row order is from the export; the values are live formulas.")
+    ws["A2"].font = GREY
+    ws["A2"].alignment = Alignment(wrap_text=True, vertical="top")
+    ws.merge_cells("A2:I2")
+    ws.row_dimensions[2].height = 44
+    head = 4
+    names = ["Item", "Part", "Low", "High", "Swing", "Variance %", "Worst-case %", "RSS ± without", "Gain"]
+    for col, name in enumerate(names, start=1):
+        cell = ws.cell(head, col, name)
+        cell.font = Font(bold=True)
+        cell.fill = HEAD_FILL
+        cell.border = BOX
+        cell.alignment = Alignment(wrap_text=True, horizontal="center", vertical="center")
+    src = "'Stack-up'!"
+    half_sum = f"SUM({src}$K${first}:$K${last})"
+    var_sum = f"SUM({src}$N${first}:$N${last})"
+    rows = sensitivity(contributors, result)
+    for r, row in enumerate(rows, start=head + 1):
+        k = first + row["index"]
+        ends = f"{src}H{k}*({src}J{k}-{src}K{k}),{src}H{k}*({src}J{k}+{src}K{k})"
+        formulas = [
+            f"={src}A{k}",
+            f"={src}B{k}",
+            f"=MIN({ends})",
+            f"=MAX({ends})",
+            f"=D{r}-C{r}",
+            f"={src}O{k}",
+            f"=IF({half_sum}=0,0,100*{src}K{k}/{half_sum})",
+            f"={src}{sigma_cell}*SQRT(MAX(0,{var_sum}-{src}N{k}))",
+            f"={src}$B${rss_row}-H{r}",
+        ]
+        for col, formula in enumerate(formulas, start=1):
+            cell = ws.cell(r, col, formula)
+            cell.border = BOX
+            if col >= 3:
+                cell.number_format = "0.0" if col in (6, 7) else "0.000"
+    end = head + len(rows)
+    chart = BarChart()
+    chart.type = "bar"
+    chart.grouping = "clustered"
+    chart.overlap = 100
+    chart.title = "Tornado: result shift with each row at its limits"
+    chart.y_axis.title = "shift of the result"
+    chart.x_axis.scaling.orientation = "maxMin"          # largest contributor on top
+    chart.add_data(Reference(ws, min_col=3, max_col=4, min_row=head, max_row=end), titles_from_data=True)
+    chart.set_categories(Reference(ws, min_col=1, min_row=head + 1, max_row=end))
+    chart.height = max(7, 0.7 * len(rows) + 3)
+    chart.width = 18
+    ws.add_chart(chart, f"A{end + 2}")
+    for letter, width in zip("ABCDEFGHI", [8, 24, 10, 10, 10, 11, 13, 14, 10], strict=True):
+        ws.column_dimensions[letter].width = width
 
 
 def _assumptions_sheet(wb, meta: dict, result: Result):
@@ -201,6 +266,7 @@ def _assumptions_sheet(wb, meta: dict, result: Result):
     ws["A1"].font = Font(size=14, bold=True)
     lines = [
         ("Model", meta.get("step", "")),
+        ("Length unit of the STEP file", f"{meta.get('units', 'mm')} (all values in this report are in mm)"),
         ("Chain used", meta.get("chain", "")),
     ]
     for alt in meta.get("alternatives", []):
@@ -209,13 +275,17 @@ def _assumptions_sheet(wb, meta: dict, result: Result):
         ("Contact tolerance (mm)", meta.get("contact_tol", "")),
         ("Method", "1-D stack along the axis; worst case = sum of half ranges; RSS = k * sqrt(sum sigma^2)"),
         ("Asymmetric tolerances", "centred first: mean shift = (+tol - -tol)/2, half range = (+tol + -tol)/2"),
-        ("Distributions", "normal: tol = +/- k sigma (k = sigma level); uniform: sigma = h/sqrt(3); triangular: sigma = h/sqrt(6)"),
+        ("Distributions",
+         "normal: tol = +/- k sigma (k = sigma level); uniform: sigma = h/sqrt(3); triangular: sigma = h/sqrt(6)"),
         ("Cp / Cpk / ppm", "from the mean and sigma of the sum, normal approximation"),
         ("Monte Carlo", f"{result.mc_samples:,} samples, seed 1; snapshot, not recalculated by Excel"),
-        ("Not covered", "angles, GD&T (position, flatness, parallelism), part deformation, temperature"),
+        ("Not covered", "angles, part deformation, temperature. GD&T callouts found on the drawings are listed "
+                        "below; they are in the stack only when added as a row (zone width t -> ± t/2)"),
         ("3D vs 2D", "the 3D nominal is used; when a drawing gives a different nominal its limits are kept "
                      "and the source column notes the difference"),
     ]
+    for callout in meta.get("gdt", []):
+        lines.append(("GD&T on the drawings", callout))
     for w in meta.get("warnings", []):
         lines.append(("Warning", w))
     row = 3

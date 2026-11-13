@@ -108,7 +108,7 @@ def render_section(path: str, parts: list[Part], chain_parts: list[int], start: 
     def to_px(uu, vv):
         return ((uu - lo_u) * scale, 60 + (hi_v - vv) * scale)
 
-    for idx, (part_index, region) in enumerate(regions):
+    for part_index, region in regions:
         if part_index in chain_parts:
             hue = (chain_parts.index(part_index) * 0.17) % 1.0
             fill = tuple(int(255 * x) for x in colorsys.hsv_to_rgb(hue, 0.55, 0.95))

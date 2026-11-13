@@ -1,7 +1,9 @@
 """STEP loading and planar-face extraction (OpenCascade via cadquery-ocp)."""
 from __future__ import annotations
 
+import re
 from dataclasses import dataclass, field
+from pathlib import Path
 
 from OCP.Bnd import Bnd_Box
 from OCP.BRep import BRep_Tool
@@ -59,6 +61,54 @@ class PlanarFace:
     @property
     def kind(self) -> str:
         return "top" if self.sign > 0 else "bottom"
+
+
+_SI_LENGTH = re.compile(rb"SI_UNIT\s*\(\s*(\$|\.[A-Z]+\.)\s*,\s*\.METRE\.\s*\)")
+_CONVERSION_UNIT = re.compile(rb"CONVERSION_BASED_UNIT\s*\(\s*'([^']*)'")
+_SI_PREFIX = {b"$": "m", b".MILLI.": "mm", b".CENTI.": "cm", b".DECI.": "dm", b".MICRO.": "um", b".KILO.": "km"}
+_IMPERIAL = {"INCH": "inch", "INCHES": "inch", "IN": "inch", "FOOT": "foot", "FEET": "foot", "FT": "foot",
+             "MIL": "mil", "THOU": "mil", "MICROINCH": "microinch", "YARD": "yard"}
+
+
+def step_length_units(path: str | Path) -> tuple[str, ...]:
+    """Length units a STEP file declares, e.g. ("mm",) or ("inch",); () when none is found.
+
+    Read from the file text (SI_UNIT / CONVERSION_BASED_UNIT entities), so it works before and
+    independently of the geometry import. An inch unit is defined in the file through a millimetre
+    SI unit, so "mm" is dropped when an imperial unit is present.
+    """
+    found: set[str] = set()
+    imperial: set[str] = set()
+    tail = b""
+    with open(path, "rb") as handle:
+        while chunk := handle.read(1 << 20):
+            data = tail + chunk
+            for match in _SI_LENGTH.finditer(data):
+                found.add(_SI_PREFIX.get(match.group(1), match.group(1).decode().strip(".").lower() + "metre"))
+            for match in _CONVERSION_UNIT.finditer(data):
+                name = _IMPERIAL.get(match.group(1).decode(errors="replace").strip().upper())
+                if name:
+                    imperial.add(name)
+            tail = data[-200:]
+    if imperial:
+        found.discard("mm")
+        found |= imperial
+    return tuple(sorted(found))
+
+
+def unit_note(units: tuple[str, ...]) -> str | None:
+    """A sentence for the user when the STEP is not plainly in millimetres; None when it is."""
+    if units == ("mm",):
+        return None
+    if not units:
+        return ("this STEP file does not declare a length unit; the geometry is read as millimetres - "
+                "check one known dimension before trusting the result")
+    names = " + ".join(units)
+    if "mm" in units:
+        return (f"this STEP file declares several length units ({names}); the geometry was converted to "
+                "millimetres on import - check one known dimension")
+    return (f"this STEP file is in {names}, not mm; the geometry was converted to millimetres on import, so "
+            "every level, nominal and tolerance here is in mm - check one known dimension")
 
 
 def _label_name(label) -> str:

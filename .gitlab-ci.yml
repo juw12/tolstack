@@ -3,5 +3,7 @@ test:
   script:
     - apt-get update && apt-get install -y libgl1 libglu1-mesa
     - pip install -e ".[app,dev]"
+    - ruff check .
+    - mypy
     - pytest -q
     - python -m tolstack demo demo_ci --run

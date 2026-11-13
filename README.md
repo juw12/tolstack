@@ -23,18 +23,21 @@ Try it in one command: `python -m tolstack demo tolstack_demo --run` (writes a d
    always checked against the 3D (`sum of rows = To − From`); a chain that does not close is refused.
 4. **Finds tolerances**:
    - The 2D PDF whose file name matches the part name (or the one you assign) is searched for that
-     dimension: `62.73±0.1`, `2 +0/-0.05`, limit dimensions `12.10/12.00` or `5.95~6.05`.
+     dimension: `62.73±0.1`, `2 +0/-0.05`, upper- or lower-only `4 +0.1/0` / `4 0/-0.05`, limit dimensions
+     `12.10/12.00` or `5.95~6.05`.
      All candidates are ranked and shown; you can pick another one. The used one is cropped with a red box as evidence.
    - Title-block notes ("TOLERANCES UNLESS SPECIFIED …") are ignored so they cannot be mistaken for a dimension.
    - If the 3D nominal differs from the drawing nominal, the **drawing limits are kept** and the difference is noted.
    - Drawings without a text layer (text exported as lines) are flagged; with Tesseract installed they can be OCR'd.
    - Otherwise the **general tolerance table** applies (editable; default 0–10 ±0.05, 10–50 ±0.10, >50 ±0.15).
+   - **GD&T callouts** (flatness, parallelism, profile, position …) found on the drawings are listed. They
+     are not in the stack unless you add one as a row (zone of total width t → nominal 0, ± t/2).
 5. **Analyzes**: nominal, mean shift for asymmetric tolerances, worst case, RSS, Cp, Cpk, predicted ppm and yield,
-   contribution %, and a Monte Carlo % out of spec. Each row can be `normal` (±3σ by default), `uniform`
+   contribution %, a **sensitivity table** (which tolerance to tighten first) and a Monte Carlo % out of spec. Each row can be `normal` (±3σ by default), `uniform`
    or `triangular`.
 6. **Writes Excel**: inputs in yellow, everything else a formula (edit a tolerance or a distribution and the
    whole stack, Cp/Cpk and verdicts recalculate), PASS/FAIL, contribution chart, section picture,
-   "2D references" sheet, "Assumptions" sheet (method, chain used, other chains found, general table) and a
+   "2D references" sheet, "Sensitivity" sheet, "Assumptions" sheet (method, chain used, other chains found, general table) and a
    Prepared / Checked / Approved block. Prints landscape on one page width.
 
 You stay in control: the chain is an editable table, so you can change values, flip a direction, or add
@@ -46,6 +49,15 @@ rows the CAD cannot see, such as PCB bow, switch travel, assembly float or glue 
 git clone https://github.com/juw12/tolstack.git
 cd tolstack
 pip install -e ".[app]"          # or: pip install -r requirements.txt
+```
+
+**Windows, no command line:** double-click `start.bat`. It creates `.venv`, installs tolstack and opens the app.
+
+**Docker:**
+
+```bash
+docker build -t tolstack .
+docker run --rm -p 8501:8501 tolstack      # then open http://localhost:8501
 ```
 
 Python 3.10–3.13. Works on Windows, macOS and Linux. Optional: [Tesseract](https://github.com/tesseract-ocr/tesseract)
@@ -66,7 +78,11 @@ streamlit run app.py
    A section picture of the chain appears right away.
 4. Check the table. Open "2D drawings" to assign a drawing to a part or choose another dimension candidate.
 5. Read the result (nominal, WC, RSS, verdict, Cpk, Monte Carlo), then **Create Excel**.
-   **Download this analysis as a config** saves a YAML you can re-run from the command line.
+   **Download this analysis as a config** saves a portable YAML: it names the STEP and the drawings
+   (`drawings/`) instead of a path on one computer, so it runs from any folder that holds those files.
+6. Optional: "GD&T on the drawings" adds a callout as a row; "Sensitivity" shows what each row does to the result.
+
+Each browser session works in its own folder on the server; folders idle for a day are removed.
 
 ### Command line / batch
 
@@ -101,7 +117,11 @@ Unknown keys are rejected, so a typo cannot silently change a result. See `examp
 
 ## Limits (read before trusting a result)
 
-- **1-D stack-ups only**, along one axis. No angles, no GD&T position or flatness, no 3D variation.
+- **1-D stack-ups only**, along one axis. No angles, no 3D variation. GD&T is read from the drawing text and
+  listed; it enters the stack only when you add a callout as a row, and only as a simple ± t/2 zone
+  (no datum shift, no material-condition bonus). The GDT symbol-font mapping is not yet proven on many real drawings.
+- The STEP **unit check only warns**. Geometry is always handled in mm; check one known dimension when warned.
+- A tolerance stacked on two text lines in the PDF (upper over lower) is not merged; pick the value by hand.
 - Contacts are **planar faces normal to the axis**. Screws, snaps, springs, cylindrical seats and switch
   actuation points are not contacts in the CAD; add them as extra rows.
 - 2D lookup needs PDFs with a **text layer** (or Tesseract for OCR). Check the source column and the 2D evidence sheet.
@@ -115,6 +135,8 @@ Unknown keys are rejected, so a typo cannot silently change a result. See `examp
 ```bash
 pip install -e ".[app,dev]"
 pytest -q
+ruff check .
+mypy
 ```
 
 See `CONTRIBUTING.md` for the code layout and the rules for changes, and `CHANGELOG.md` for what changed.

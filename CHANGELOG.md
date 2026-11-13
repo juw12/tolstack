@@ -3,6 +3,32 @@
 All notable changes to tolstack. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/). Config files carry their own `version` (currently 1).
 
+## [0.3.0] - 2026-11-13
+
+### Added
+- STEP unit check: the length unit declared in the file is read and shown. A file in inch or metre, with
+  several units, or with none gets a warning in the app, the CLI and the report (OpenCascade converts the
+  geometry to mm on import; the warning tells you to check a known dimension).
+- Sensitivity table (app, and a "Sensitivity" sheet in the Excel with live formulas): rows ranked by their
+  share of the variance, with the shift of the result at each row's lower / upper limit, so you see which
+  tolerance to tighten first.
+- GD&T feature control frames on the drawings are read and listed (flatness, parallelism, profile,
+  position ...; symbols, spelled-out names and the GDT symbol font). They are **not** in the stack unless
+  you add one as a row: a zone of total width t becomes nominal 0, ± t/2. Kinds that cannot act along the
+  axis (position, circularity, diameter zones) are marked.
+- Upper-only and lower-only tolerances (`4 +0.1/0`, `4 0/-0.05`) are read. The dimension parser is now
+  tested against a corpus of formats, and a GD&T frame is never read as a dimension.
+- Portable configs: "Download this analysis as a config" names the STEP and the drawings (`drawings/`)
+  instead of pointing at one computer; a loaded config asks for the files it needs and matches drawings
+  by file name.
+- App: every browser session works in its own folder; folders idle for a day are removed.
+- `start.bat` (Windows: creates `.venv`, installs, opens the app) and a `Dockerfile` (port 8501, non-root).
+- `ruff` and `mypy` in CI (GitHub and GitLab) and in the `dev` extra.
+
+### Fixed
+- App: an uploaded STEP was rewritten on every rerun, which changed its time stamp and reloaded the
+  model each time. Uploads are now written once.
+
 ## [0.2.0] - 2026-11-12
 
 ### Added

@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tolstack"
-version = "0.2.0"
+version = "0.3.0"
 description = "1-D tolerance stack-up (gap / step) from a STEP assembly and 2D drawings, exported to Excel"
 readme = "README.md"
 license = {text = "MIT"}
@@ -21,7 +21,7 @@ dependencies = [
 
 [project.optional-dependencies]
 app = ["streamlit>=1.35", "pandas>=2.0"]
-dev = ["pytest"]
+dev = ["pytest", "ruff", "mypy"]
 
 [project.urls]
 Homepage = "https://github.com/juw12/tolstack"
@@ -32,3 +32,19 @@ tolstack = "tolstack.cli:main"
 
 [tool.setuptools]
 packages = ["tolstack"]
+
+[tool.ruff]
+line-length = 130
+target-version = "py310"
+
+[tool.ruff.lint]
+select = ["E", "F", "W", "I", "B"]
+
+[tool.mypy]
+python_version = "3.10"
+files = ["tolstack"]
+warn_unused_ignores = true
+
+[[tool.mypy.overrides]]
+module = ["OCP.*", "fitz.*", "shapely.*", "openpyxl.*", "yaml.*", "streamlit.*", "pandas.*", "matplotlib.*", "PIL.*"]
+ignore_missing_imports = true

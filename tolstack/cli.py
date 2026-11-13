@@ -34,6 +34,8 @@ def main(argv=None):
             for f in model.faces_of(part.index):
                 print(f"     {f.kind:6s} @ {f.level:10.4f}   area {f.area:9.2f}")
         print(f"{len(model.contacts)} contacts found along {args.axis} (contact tolerance {model.contact_tol} mm)")
+        if model.unit_note:
+            print(f"warning: {model.unit_note}")
     elif args.cmd == "demo":
         from .demo import write_demo, write_demo_config
 
@@ -67,10 +69,11 @@ def main(argv=None):
 
         config_path = Path(args.config)
         config = yaml.safe_load(config_path.read_text(encoding="utf-8"))
+        notes: list[str] = []
         try:
-            contributors, result, out = run_config(config, config_path.parent)
+            contributors, result, out = run_config(config, config_path.parent, notes)
         except (ValueError, FileNotFoundError) as err:
-            raise SystemExit(f"tolstack: {err}")
+            raise SystemExit(f"tolstack: {err}") from err
         for c in contributors:
             sign = "+" if c.direction > 0 else "-"
             print(f"{c.label:>3} {sign} {c.nominal:8.3f} +{c.tol_plus:.3f}/-{c.tol_minus:.3f}  {c.part}  [{c.source}]")
@@ -80,6 +83,13 @@ def main(argv=None):
             cp = "-" if result.cp is None else f"{result.cp:.2f}"
             print(f"Cp {cp} | Cpk {result.cpk:.2f} | predicted {result.ppm:.1f} ppm out of spec | "
                   f"Monte Carlo {result.mc_out_pct:.3f} % out")
+        from .stack import sensitivity
+
+        top = sensitivity(contributors, result)[0]
+        print(f"largest contributor: {top['label']} {top['part']} ({top['contribution']:.0f} % of the variance; "
+              f"RSS ± {result.rss:.3f} -> {top['rss_without']:.3f} without it)")
+        for note in notes:
+            print(note)
         print(f"Excel: {out}")
 
 

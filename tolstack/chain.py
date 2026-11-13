@@ -8,6 +8,7 @@ load path instead of trusting one silent answer.
 from __future__ import annotations
 
 from collections import defaultdict, deque
+from collections.abc import Set as AbstractSet
 from dataclasses import dataclass
 
 from .cad import Part, PlanarFace, face_outline
@@ -37,7 +38,7 @@ class ChainOption:
         if not self.steps:
             return "same part (no contacts needed)"
         text = parts[self.steps[0][0]].name
-        for _, child, contact in self.steps:
+        for _, child, _ in self.steps:
             text += f" -> {parts[child].name}"
         levels = ", ".join(f"{c.level:.3f}" for _, _, c in self.steps)
         return (f"{text}   ({self.hops} contacts at {levels}; weakest overlap {self.min_overlap:.1f} mm2)")
@@ -118,13 +119,13 @@ def _graph(contacts: list[Contact], exclude: set[int]):
     return graph
 
 
-def find_path(start_part: int, end_part: int, contacts: list[Contact], exclude: set[int] = frozenset()):
+def find_path(start_part: int, end_part: int, contacts: list[Contact], exclude: AbstractSet[int] = frozenset()):
     """Shortest chain of parts linked by contacts (breadth-first). None if there is no path."""
     options = find_paths(start_part, end_part, contacts, exclude, max_paths=1)
     return options[0].steps if options else None
 
 
-def find_paths(start_part: int, end_part: int, contacts: list[Contact], exclude: set[int] = frozenset(),
+def find_paths(start_part: int, end_part: int, contacts: list[Contact], exclude: AbstractSet[int] = frozenset(),
                max_paths: int = 5, extra_hops: int = 2, budget: int = 50_000) -> list[ChainOption]:
     """Candidate chains, ranked: fewest contacts first, then the strongest weakest contact.
 
@@ -157,7 +158,7 @@ def find_paths(start_part: int, end_part: int, contacts: list[Contact], exclude:
 
     found: list[ChainOption] = []
     expansions = 0
-    stack = [(start_part, [], {start_part})]
+    stack: list[tuple[int, list, set[int]]] = [(start_part, [], {start_part})]
     while stack and expansions < budget:
         node, steps, visited = stack.pop()
         expansions += 1
@@ -175,7 +176,7 @@ def find_paths(start_part: int, end_part: int, contacts: list[Contact], exclude:
 
 
 def build_chain(start: PlanarFace, end: PlanarFace, parts: list[Part], contacts: list[Contact],
-                exclude: set[int] = frozenset(), steps: list | None = None) -> list[Contributor]:
+                exclude: AbstractSet[int] = frozenset(), steps: list | None = None) -> list[Contributor]:
     """Loop from the start face through the parts to the end face.
 
     Each part contributes the distance between the two faces it uses (entry and exit).
@@ -217,7 +218,7 @@ def build_chain(start: PlanarFace, end: PlanarFace, parts: list[Part], contacts:
             direction=1 if delta > 0 else -1,
             source="3D",
         ))
-    for parent, child, contact in steps:
+    for parent, _child, contact in steps:
         if abs(contact.gap) > 1e-6:
             # gap = upper face level - lower face level; travelling downwards reverses its sign
             delta = contact.gap if parent == contact.lower else -contact.gap

@@ -102,6 +102,42 @@ class Result:
         return "PASS"
 
 
+def is_extra(contributor: Contributor) -> bool:
+    """Rows the user added by hand (manual rows and GD&T callouts), i.e. not read from the 3D chain."""
+    return contributor.source == "manual" or contributor.source.startswith("GD&T")
+
+
+def sensitivity(contributors: list[Contributor], result: Result) -> list[dict]:
+    """Tornado table: what each row does to the result, largest variance share first.
+
+    low / high     shift of the result when this row alone sits at its lower / upper limit
+    swing          high - low (the full band of the row)
+    contribution   percent of the total variance (what drives the RSS result)
+    wc_share       percent of the worst-case band
+    rss_without    RSS ± of the stack if this row had no tolerance at all - the gain from tightening it
+    """
+    k = result.sigma_level
+    variances = [c.sigma(k) ** 2 for c in contributors]
+    total_var = sum(variances)
+    total_wc = sum(c.half_range for c in contributors) or 1.0
+    rows = []
+    for index, (c, share, var) in enumerate(zip(contributors, result.contributions, variances, strict=False)):
+        ends = sorted((c.direction * (c.mean_shift - c.half_range), c.direction * (c.mean_shift + c.half_range)))
+        rows.append({
+            "index": index,                 # position in `contributors` (labels need not be unique)
+            "label": c.label,
+            "part": c.part,
+            "low": ends[0],
+            "high": ends[1],
+            "swing": ends[1] - ends[0],
+            "contribution": share,
+            "wc_share": 100.0 * c.half_range / total_wc,
+            "rss_without": k * math.sqrt(max(total_var - var, 0.0)),
+        })
+    rows.sort(key=lambda row: (-row["contribution"], -row["swing"]))
+    return rows
+
+
 def analyze(contributors: list[Contributor], lsl: float | None = None, usl: float | None = None,
             mc_samples: int = 100_000, sigma_level: float = 3.0, seed: int = 1) -> Result:
     if not contributors:

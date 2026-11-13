@@ -1,7 +1,7 @@
 """tolstack web app:  streamlit run app.py"""
-import tempfile
 from dataclasses import asdict
 from pathlib import Path
+from uuid import uuid4
 
 import pandas as pd
 import streamlit as st
@@ -9,17 +9,51 @@ import yaml
 
 from tolstack.chain import build_chain, find_paths
 from tolstack.excel import write_report
-from tolstack.pipeline import CONFIG_VERSION, apply_tolerances, expand_drawings, load_model, validate_config
-from tolstack.stack import DISTRIBUTIONS, Contributor, analyze
+from tolstack.pipeline import (
+    CONFIG_VERSION,
+    apply_tolerances,
+    expand_drawings,
+    gdt_contributor,
+    load_model,
+    portable_paths,
+    resolve_drawing_map,
+    validate_config,
+)
+from tolstack.stack import DISTRIBUTIONS, Contributor, analyze, is_extra, sensitivity
 from tolstack.tolerances import DEFAULT_GENERAL_TABLE, tesseract_available
+from tolstack.workspace import ROOT, clean_old, session_dir
 
 st.set_page_config(page_title="tolstack - tolerance stack-up", layout="wide")
 st.title("tolstack - tolerance stack-up from 3D + 2D")
 st.caption("1 Load a STEP assembly  ->  2 pick the two faces of the gap / step  ->  3 check the chain  "
            "->  4 read the result  ->  5 export Excel.")
 
-WORK = Path(tempfile.gettempdir()) / "tolstack_app"
-WORK.mkdir(exist_ok=True)
+with st.expander("How it works / what to prepare"):
+    st.markdown(
+        "**You need** one assembly STEP file (AP203 / AP214 / AP242, parts as separate solids, in their "
+        "assembled position). **Optional:** the 2D drawings as PDF, one per part, named like the part "
+        "(`SPACER.pdf` for part `SPACER`).\n\n"
+        "1. **Files** (sidebar) - upload the STEP and PDFs, or try the *Demo assembly*.\n"
+        "2. **What to analyze** - pick the stack-up axis, then the *From* and *To* faces. The result is the "
+        "distance To - From along that axis: a step (flush / offset) or a gap (clearance).\n"
+        "3. **Check the chain** - the app walks from one face to the other through parts that touch. Each row is "
+        "one dimension of one part. Tolerances come from the drawing when the dimension is found there, else "
+        "from the general tolerance table. Edit any cell; add rows for what CAD cannot see.\n"
+        "4. **Result** - worst case, RSS, Cpk and Monte Carlo against your spec limits, and which row matters most.\n"
+        "5. **Excel report** - live formulas, the section picture, the 2D evidence and a sign-off block.\n\n"
+        "Everything is in **mm**. The source column always says where a tolerance came from - check it before "
+        "you trust the number."
+    )
+
+
+@st.cache_resource(ttl=3600, show_spinner=False)
+def housekeeping():
+    """Remove uploads of sessions idle for a day; at most once an hour per server."""
+    return clean_old()
+
+
+housekeeping()
+WORK = session_dir(st.session_state.setdefault("work_id", uuid4().hex[:12]))    # private to this browser session
 NUMERIC = ["nominal", "tol_plus", "tol_minus"]
 TYPES = ["Step (offset / flush between two faces)", "Gap (clearance between two faces)"]
 
@@ -33,13 +67,27 @@ def cached_model(step_path: str, axis: str, contact_tol: float, mtime: float):
 def demo_files():
     from tolstack.demo import write_demo
 
-    step = write_demo(WORK / "demo")
-    return str(step), sorted(str(p) for p in (WORK / "demo" / "drawings").glob("*.pdf"))
+    step = write_demo(ROOT / "demo")
+    return str(step), sorted(str(p) for p in (ROOT / "demo" / "drawings").glob("*.pdf"))
 
 
 def reset_chain():
-    for key in ("chain", "raw_chain", "candidates", "choices"):
+    for key in ("chain", "raw_chain", "candidates", "choices", "gdt"):
         st.session_state.pop(key, None)
+
+
+def save_upload(upload, folder: Path) -> Path:
+    """Write an uploaded file once. Rewriting it on every rerun would change its time stamp and reload the STEP."""
+    path = folder / Path(upload.name).name
+    if st.session_state.get(f"saved_{path}") != upload.file_id or not path.exists():
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_bytes(upload.getbuffer())
+        st.session_state[f"saved_{path}"] = upload.file_id
+    return path
+
+
+def safe_name(text: str) -> str:
+    return "".join(ch if ch.isalnum() or ch in "-_" else "_" for ch in text).strip("_") or "analysis"
 
 
 # ---------------------------------------------------------------- 1. input files
@@ -51,11 +99,19 @@ with st.sidebar:
             loaded = yaml.safe_load(saved.getvalue().decode("utf-8")) or {}
             validate_config(loaded)
             st.session_state.loaded_config_id = saved.file_id
-            st.session_state.input_mode = "Path on this computer"
-            st.session_state.step_input = str(loaded["step"])
+            config_step = Path(str(loaded["step"]))
             globs = loaded.get("drawings") or []
-            if globs:
-                st.session_state.drawings_input = str(Path(globs[0]).parent)
+            if config_step.is_absolute() and config_step.is_file():
+                st.session_state.input_mode = "Path on this computer"
+                st.session_state.step_input = str(config_step)
+                if globs:
+                    st.session_state.drawings_input = str(Path(globs[0]).parent)
+                st.session_state.pop("config_needs", None)
+            else:                                   # a portable config, or one from another computer
+                st.session_state.input_mode = "Upload files"
+                st.session_state.config_needs = config_step.name
+            st.session_state.config_map = loaded.get("drawing_map") or {}
+            st.session_state.config_extra = loaded.get("extra") or []
             st.session_state.axis = loaded.get("axis", "z")
             st.session_state.contact_tol = float(loaded.get("contact_tol", 0.02))
             st.session_state.sigma_level = float(loaded.get("sigma_level", 3.0))
@@ -67,7 +123,10 @@ with st.sidebar:
             st.session_state.ta_type = TYPES[1] if loaded.get("type") == "gap" else TYPES[0]
             st.session_state.pending_config = loaded
             reset_chain()
-            st.success("Config loaded - check the faces, then build the chain.")
+            if st.session_state.get("config_needs"):
+                st.success("Config loaded - now upload its STEP file and drawings below.")
+            else:
+                st.success("Config loaded - check the faces, then build the chain.")
         except (ValueError, KeyError, yaml.YAMLError) as err:
             st.error(f"Could not load this config: {err}")
 
@@ -75,21 +134,24 @@ with st.sidebar:
     mode = st.radio("Input", ["Upload files", "Path on this computer", "Demo assembly"], horizontal=False,
                     key="input_mode",
                     help="The demo is a 5-part box stack with 2D drawings - a quick way to see every step.")
-    step_path, drawings = None, []
+    step_path, drawings, drawing_globs = None, [], []
     if mode == "Upload files":
-        step_file = st.file_uploader("3D assembly (STEP)", type=["step", "stp"])
+        step_file = st.file_uploader("3D assembly (STEP)", type=["step", "stp"],
+                                     help="One assembly file with every part as its own solid, in the assembled "
+                                          "position. Files stay in a private temporary folder and are deleted after "
+                                          "a day without use.")
         pdf_files = st.file_uploader("2D drawings (PDF, optional)", type=["pdf"], accept_multiple_files=True,
                                      help="Matched to parts by file name, e.g. SPACER.pdf -> part SPACER.")
         if step_file:
-            step_path = WORK / step_file.name
-            step_path.write_bytes(step_file.getbuffer())
-        for f in pdf_files or []:
-            p = WORK / "drawings" / f.name
-            p.parent.mkdir(exist_ok=True)
-            p.write_bytes(f.getbuffer())
-            drawings.append(str(p))
+            step_path = save_upload(step_file, WORK)
+        elif st.session_state.get("config_needs"):
+            st.info(f"The loaded config expects **{st.session_state.config_needs}** - upload it here, "
+                    "with the same drawings.")
+        drawings = [str(save_upload(f, WORK / "drawings")) for f in pdf_files or []]
     elif mode == "Path on this computer":
-        typed = st.text_input("STEP file path", key="step_input")
+        typed = st.text_input("STEP file path", key="step_input",
+                              help="A path this app can read: on your own PC when you run it locally. "
+                                   "On a shared server use Upload files.")
         folder = st.text_input("2D drawings folder (optional)", key="drawings_input")
         if typed and Path(typed.strip('"')).is_file():
             step_path = Path(typed.strip('"'))
@@ -100,7 +162,8 @@ with st.sidebar:
             if not root.is_dir():
                 st.error("Drawings folder not found.")
             else:
-                drawings = sorted(set(expand_drawings([str(root / "**" / "*.pdf"), str(root / "*.pdf")], Path("."))))
+                drawing_globs = [str(root / "*.pdf"), str(root / "**" / "*.pdf")]
+                drawings = sorted(set(expand_drawings(drawing_globs, Path("."))))
                 st.caption(f"{len(drawings)} PDF drawings found")
     else:
         demo_step, drawings = demo_files()
@@ -133,9 +196,13 @@ except Exception as err:  # noqa: BLE001 - show any CAD error as a message, not 
     st.stop()
 st.success(f"{len(model.parts)} parts, {len(model.faces)} faces normal to {axis.upper()}, "
            f"{len(model.contacts)} part-to-part contacts (true face outlines, tolerance {contact_tol:g} mm)")
+if model.unit_note:
+    st.warning(model.unit_note[0].upper() + model.unit_note[1:] + ".")
 
 # ---------------------------------------------------------------- 2. choose the analysis
 st.header("2. What to analyze")
+st.caption("Pick the two faces whose distance matters. *From* is the reference; the result is To - From along "
+           f"the {axis.upper()} axis, so a positive number means the To face sits further along +{axis.upper()}.")
 c1, c2 = st.columns(2)
 ta_type = c1.radio("Type", TYPES, key="ta_type")
 ta_name = c2.text_input("Analysis name", "Step A vs B" if ta_type.startswith("Step") else "Gap A to B")
@@ -224,7 +291,8 @@ if st.button("Build chain from 3D", type="primary", key="build"):
         raw = build_chain(start, end, model.parts, model.contacts, excluded, chosen.steps)
         st.session_state.raw_chain = [asdict(c) for c in raw]
         st.session_state.choices = {}
-        st.session_state.drawing_map = {}
+        st.session_state.drawing_map = resolve_drawing_map(st.session_state.get("config_map"), drawings)
+        st.session_state.extra_rows = list(st.session_state.get("config_extra", []))
         st.session_state.faces = (model.label(start), model.label(end))
         st.session_state.chain_text = chosen.describe(model.parts)
         st.session_state.alternatives = [o.describe(model.parts) for o in options if o is not chosen]
@@ -239,10 +307,17 @@ if "raw_chain" not in st.session_state:
 table = [tuple(r) for r in general.dropna().values.tolist()] or DEFAULT_GENERAL_TABLE
 if "chain" not in st.session_state:
     contributors = [Contributor(**r) for r in st.session_state.raw_chain]
-    found = {}
+    for row in st.session_state.get("extra_rows", []):          # rows from a loaded config, or kept on a re-read
+        try:
+            contributors.append(Contributor(**{"source": "manual", **row}))
+        except TypeError as err:
+            st.warning(f"Extra row skipped ({err}).")
+    found, gdt_found = {}, {}
     apply_tolerances(contributors, drawings, table, WORK / "refs", drawing_map=st.session_state.drawing_map,
-                     choices=st.session_state.choices, candidates_out=found, ocr=ocr)
+                     choices=st.session_state.choices, candidates_out=found, ocr=ocr, gdt_out=gdt_found)
     st.session_state.candidates = found
+    st.session_state.gdt = gdt_found
+    st.session_state.editor_version = st.session_state.get("editor_version", 0) + 1
     st.session_state.chain = [asdict(c) for c in contributors]
 
 st.header("3. Check the chain")
@@ -255,7 +330,8 @@ with st.expander("2D drawings: which drawing belongs to which part, and which di
     new_map = {}
     for part in chain_parts:
         current = st.session_state.drawing_map.get(part)
-        idx = 0 if current is None else (1 if current == "" else names.index(Path(current).name))
+        current_name = Path(current).name if current else ""
+        idx = 0 if current is None else (1 if current == "" else (names.index(current_name) if current_name in names else 0))
         pick = st.selectbox(f"Drawing for {part}", names, index=idx, key=f"map_{part}")
         if pick == "(none)":
             new_map[part] = ""
@@ -274,6 +350,7 @@ with st.expander("2D drawings: which drawing belongs to which part, and which di
     if st.button("Re-read tolerances with these choices", key="reread"):
         st.session_state.drawing_map = new_map
         st.session_state.choices = new_choices
+        st.session_state.extra_rows = st.session_state.get("current_extra", [])     # keep the rows added by hand
         st.session_state.pop("chain", None)
         st.rerun()
 
@@ -297,7 +374,7 @@ st.caption("Edit anything. Add rows for things the CAD cannot see: PCB bow, swit
 edited = st.data_editor(
     pd.DataFrame(st.session_state.chain)[["label", "part", "description", "nominal", "tol_plus", "tol_minus",
                                           "direction", "dist", "source", "ref_image"]],
-    num_rows="dynamic", use_container_width=True, key="editor",
+    num_rows="dynamic", use_container_width=True, key=f"editor_{st.session_state.get('editor_version', 0)}",
     column_config={
         "direction": st.column_config.SelectboxColumn("direction", options=[1, -1], required=True),
         "dist": st.column_config.SelectboxColumn("dist", options=list(DISTRIBUTIONS), required=True),
@@ -319,6 +396,34 @@ frame = frame.fillna({"ref_image": "", "source": "manual", "description": "", "p
 contributors = [Contributor(**{**r, "label": str(r["label"])}) for r in frame.to_dict("records")]
 if not contributors:
     st.stop()
+st.session_state.current_extra = [{k: v for k, v in asdict(c).items() if k != "ref_image"}
+                                  for c in contributors if is_extra(c)]
+
+gdt_hits = [(part, hit) for part, hits in st.session_state.get("gdt", {}).items() for hit in hits]
+if gdt_hits:
+    with st.expander(f"GD&T on the drawings: {len(gdt_hits)} callout(s) found - not in the stack unless you add them"):
+        st.caption("A zone of total width t is added as a row with nominal 0 and ± t/2. Add a callout only when "
+                   "no size tolerance in the chain already covers it. Under ASME Y14.5 Rule #1 (envelope "
+                   "principle) form tolerances such as flatness lie inside the size limits, so adding them counts "
+                   "the same variation twice. They do add under ISO 8015 independency, and so do datum-related "
+                   "orientation, profile and runout callouts on a chain face. Callouts are read from the text "
+                   "of the drawing - check each one against the drawing.")
+        used = {(c.part, c.source) for c in contributors}
+        gdt_labels = [f"{i + 1}. {part}: {hit.label()}" for i, (part, hit) in enumerate(gdt_hits)]
+        suggested = [label for label, (part, hit) in zip(gdt_labels, gdt_hits, strict=True)
+                     if hit.along_axis and (part, gdt_contributor(hit, part, "").source) not in used]
+        gdt_picked = st.multiselect("Callouts to add (preselected: zones that can act along the stack axis)",
+                                    gdt_labels, default=suggested, key=f"gdt_pick_{len(used)}")
+        if st.button("Add as rows", key="gdt_add", disabled=not gdt_picked):
+            count = sum(1 for c in contributors if c.source.startswith("GD&T"))
+            rows = [asdict(c) for c in contributors]
+            for label in gdt_picked:
+                part, hit = gdt_hits[gdt_labels.index(label)]
+                count += 1
+                rows.append(asdict(gdt_contributor(hit, part, f"G{count}")))
+            st.session_state.chain = rows
+            st.session_state.editor_version = st.session_state.get("editor_version", 0) + 1
+            st.rerun()
 
 # ---------------------------------------------------------------- 4. result
 try:
@@ -342,6 +447,16 @@ m[2].metric("Monte Carlo out of spec", f"{result.mc_out_pct:.3f} %" if has_spec 
             help=f"{result.mc_samples:,} samples, per-row distributions. Normal approximation: {result.ppm:.0f} ppm"
             if result.ppm is not None else None)
 st.bar_chart(pd.DataFrame({"variance contribution %": result.contributions}, index=[c.label for c in contributors]))
+with st.expander("Sensitivity: which tolerance to tighten first"):
+    tornado = pd.DataFrame(sensitivity(contributors, result)).drop(columns="index")
+    tornado["gain"] = result.rss - tornado["rss_without"]
+    tornado.columns = ["Item", "Part", "Low", "High", "Swing", "Variance %", "Worst-case %", "RSS ± without", "Gain"]
+    st.dataframe(tornado, hide_index=True, use_container_width=True,
+                 column_config={name: st.column_config.NumberColumn(name, format="%.1f" if "%" in name else "%.3f")
+                                for name in tornado.columns[2:]})
+    st.caption("Low / High: shift of the result with that row alone at its lower / upper limit. "
+               f"RSS ± without: the RSS band (now ± {result.rss:.3f}) if the row had no tolerance; Gain is the "
+               "difference - the most that tightening this one row can buy.")
 for c in contributors:
     if c.ref_image and Path(c.ref_image).exists():
         with st.expander(f"2D evidence {c.label} - {c.part}: {c.source}"):
@@ -367,7 +482,7 @@ if st.button("Create Excel", key="excel"):
                 chain_parts.append(idx)
         try:
             section_png = render_section(str(WORK / "section.png"), model.parts, chain_parts, start, end,
-                                         [c for c in contributors if c.source != "manual" and "contact gap" not in c.source],
+                                         [c for c in contributors if not is_extra(c) and "contact gap" not in c.source],
                                          axis, cut_axis)
             st.image(section_png)
         except ValueError as err:
@@ -376,23 +491,35 @@ if st.button("Create Excel", key="excel"):
             "type": "gap" if is_gap else "step", "axis": axis, "sigma": sigma_level,
             "from": st.session_state.faces[0], "to": st.session_state.faces[1], "step": str(step_path),
             "contact_tol": contact_tol, "general_table": table, "chain": st.session_state.chain_text,
-            "alternatives": st.session_state.alternatives}
-    out = write_report(WORK / f"{ta_name.replace(' ', '_')}.xlsx", contributors, result, meta, section_png)
+            "alternatives": st.session_state.alternatives,
+            "units": " + ".join(model.units) or "not declared",
+            "warnings": [model.unit_note] if model.unit_note else [],
+            "gdt": [f"{part}: {hit.label()}" for part, hit in gdt_hits]}
+    out = write_report(WORK / f"{safe_name(ta_name)}.xlsx", contributors, result, meta, section_png)
     st.download_button("Download Excel", Path(out).read_bytes(), file_name=Path(out).name,
                        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet")
 
+if mode == "Path on this computer":
+    paths = {"step": str(step_path), "drawing_map": st.session_state.drawing_map}
+    if drawing_globs:
+        paths["drawings"] = drawing_globs
+else:                       # uploaded files live in a temporary folder: write names, not paths
+    paths = portable_paths(step_path, st.session_state.drawing_map, drawings)
 config = {
     "version": CONFIG_VERSION, "name": ta_name, "type": "gap" if is_gap else "step", "author": author,
-    "step": str(step_path), "axis": axis,
+    **paths, "axis": axis,
     "from": {"part": model.parts[start.part].name, "face": start.kind, "level": start.level},
     "to": {"part": model.parts[end.part].name, "face": end.kind, "level": end.level},
     "exclude": [model.parts[i].name for i in sorted(excluded)],
     "chain_option": option_labels.index(picked) + 1, "contact_tol": contact_tol, "sigma_level": sigma_level,
     "spec": {"lsl": lsl, "usl": usl}, "general_tolerance": [list(r) for r in table],
-    "drawing_map": st.session_state.drawing_map,
-    "extra": [{k: v for k, v in asdict(c).items() if k != "ref_image"} for c in contributors if c.source == "manual"],
-    "section": {"cut_axis": cut_axis}, "output": f"{ta_name.replace(' ', '_')}.xlsx",
+    "extra": st.session_state.current_extra,
+    "section": {"cut_axis": cut_axis}, "output": f"{safe_name(ta_name)}.xlsx",
 }
 st.download_button("Download this analysis as a config (re-run with `python -m tolstack run`)",
                    yaml.safe_dump(config, sort_keys=False, allow_unicode=True), file_name="tolstack_config.yaml",
                    key="config_download")
+if mode != "Path on this computer":
+    st.caption(f"The config names the files instead of pointing at this server. To run it again, keep it in one "
+               f"folder with `{paths['step']}` and the PDFs in a `drawings` sub-folder, then "
+               "`python -m tolstack run tolstack_config.yaml` - or load it here and upload the same files.")

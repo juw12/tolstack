@@ -10,7 +10,8 @@ git clone https://github.com/juw12/tolstack.git
 cd tolstack
 python -m venv .venv && . .venv/bin/activate      # Windows: .venv\Scripts\activate
 pip install -e ".[app,dev]"
-pytest -q                                         # ~20 tests, under a minute
+pytest -q                                         # 72 tests, under a minute
+ruff check . && mypy                              # lint and types, both run in CI
 streamlit run app.py
 ```
 
@@ -25,6 +26,7 @@ streamlit run app.py
 | `tolstack/excel.py` | the report (formulas, chart, assumptions, sign-off) |
 | `tolstack/pipeline.py` | config validation and the end-to-end `run_config` |
 | `tolstack/section.py` | colour section picture |
+| `tolstack/workspace.py` | per-session work folders of the app and their clean-up |
 | `app.py`, `tolstack/cli.py` | web app and command line |
 
 ## Rules for changes
@@ -40,5 +42,5 @@ streamlit run app.py
 ## Pull requests
 
 1. Branch from `main`, keep the change focused.
-2. `pytest -q` passes locally; CI runs on Linux and Windows.
+2. `pytest -q`, `ruff check .` and `mypy` pass locally; CI runs them on Linux and Windows.
 3. Add a line under "Unreleased" in `CHANGELOG.md`.

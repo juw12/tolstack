@@ -8,3 +8,7 @@ examples/out/
 demo_ci/
 tolstack_demo/
 *.egg-info/
+.venv/
+.mypy_cache/
+.ruff_cache/
+security-opengrep-*/
