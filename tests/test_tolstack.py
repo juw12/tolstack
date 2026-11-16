@@ -212,6 +212,29 @@ def test_true_outline_rejects_bbox_only_overlap(tmp_path):
     assert ring_lid.overlap == pytest.approx(40 * 40 - 20 * 20, rel=1e-3)
 
 
+def test_outline_belongs_to_its_own_face_when_a_second_model_is_loaded(tmp_path, monkeypatch):
+    """Two models in one process (the test suite, the web app): a face must not get the outline of a
+    face of the model loaded before it. The outline cache used to be keyed by id(shape), and Python
+    gives the address of a freed shape to a new one; a constant id() makes that reuse happen on
+    every run instead of now and then."""
+    import sys
+
+    sys.path.insert(0, str(Path(__file__).parents[1] / "examples"))
+    import make_demo
+
+    from tolstack import cad
+    from tolstack.pipeline import find_face, load_model
+
+    monkeypatch.setattr(cad, "id", lambda obj: 1, raising=False)
+    plate = load_model(str(make_demo.write_step(tmp_path / "plate.step", [("BLOCK", make_demo.box(0, 0, 0, 60, 40, 5))])))
+    pin = load_model(str(make_demo.write_step(tmp_path / "pin.step", [("BLOCK", make_demo.box(0, 0, 0, 10, 10, 5))])))
+    plate_top, pin_top = find_face(plate, "BLOCK", "top"), find_face(pin, "BLOCK", "top")
+    assert (plate_top.part, plate_top.face_id) == (pin_top.part, pin_top.face_id)     # same place in both models
+    assert cad.face_outline(plate_top).area == pytest.approx(60 * 40, rel=1e-3)
+    assert cad.face_outline(pin_top).area == pytest.approx(10 * 10, rel=1e-3)
+    assert cad.face_outline(plate_top).area == pytest.approx(60 * 40, rel=1e-3)       # and the first is unchanged
+
+
 def test_parallel_paths_are_listed_and_selectable(tmp_path):
     import sys
 

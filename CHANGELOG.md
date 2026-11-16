@@ -3,6 +3,16 @@
 All notable changes to tolstack. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/). Config files carry their own `version` (currently 1).
 
+## [Unreleased]
+
+### Fixed
+- **A face could get the outline of a face from a model loaded earlier in the same process.** The outline cache
+  was keyed by `id(shape)`; Python reuses the address of a freed shape, so after one model was dropped a face of
+  the next one sometimes found the old entry. The contact test then used the wrong outline: in the reproduction a
+  10 x 10 face was given a 60 x 40 outline and a post standing in the hole of a ring was reported as touching the
+  ring. One `tolstack` command on one model was not affected; the web app (which keeps and drops models) and the
+  test suite were. The outline is now kept on the face itself.
+
 ## [0.8.0] - 2026-11-13
 
 The stack written by hand gets the web app, and the locating fits it needs can be found in the CAD.

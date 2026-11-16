@@ -58,6 +58,8 @@ class PlanarFace:
     area: float
     shape: TopoDS_Face | None = field(default=None, repr=False, compare=False)
     axis: str = "z"
+    # cache of face_outline(): None = not built yet, (outline,) = built (the outline itself may be None)
+    _outline: tuple | None = field(default=None, repr=False, compare=False)
 
     @property
     def kind(self) -> str:
@@ -213,15 +215,15 @@ def planar_faces(part: Part, axis: str, min_area: float = 0.01) -> list[PlanarFa
     return result
 
 
-_OUTLINES: dict = {}
-
-
 def face_outline(face: PlanarFace, deflection: float = 0.02):
     """True 2-D outline of a planar face (holes included) as a shapely geometry, projected on the
-    plane normal to the stack-up axis. Built from the face triangulation; None if meshing fails."""
-    key = (id(face.shape), face.part, face.face_id)
-    if key in _OUTLINES:
-        return _OUTLINES[key]
+    plane normal to the stack-up axis. Built from the face triangulation; None if meshing fails.
+
+    The result is kept on the face itself. A module-level cache keyed by id(face.shape) is wrong in a
+    process that loads more than one model: Python reuses the address of a freed shape, and a face of
+    the new model then gets the outline of a face of the old one."""
+    if face._outline is not None:
+        return face._outline[0]
     outline = None
     if face.shape is not None:
         from shapely.geometry import Polygon
@@ -248,7 +250,7 @@ def face_outline(face: PlanarFace, deflection: float = 0.02):
                     triangles.append(tri)
             if triangles:
                 outline = unary_union(triangles).buffer(0)
-    _OUTLINES[key] = outline
+    face._outline = (outline,)
     return outline
 
 
