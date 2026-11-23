@@ -1,0 +1,22 @@
+{
+  "name": "tolstack",
+  "short_name": "tolstack",
+  "description": "1-D tolerance stack-up from a STEP assembly and 2D PDF drawings",
+  "start_url": "./",
+  "scope": "./",
+  "display": "standalone",
+  "background_color": "#fbfaf6",
+  "theme_color": "#309523",
+  "icons": [
+    {
+      "src": "icons/icon-192.png",
+      "sizes": "192x192",
+      "type": "image/png"
+    },
+    {
+      "src": "icons/icon-512.png",
+      "sizes": "512x512",
+      "type": "image/png"
+    }
+  ]
+}

@@ -1,0 +1,335 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>tolstack guide: 1-D tolerance stack-up from a STEP assembly and 2D PDF drawings</title>
+<meta name="description" content="1-D tolerance stack-up from a STEP assembly and 2D PDF drawings">
+<link rel="canonical" href="https://juw12.github.io/tolstack/">
+<link rel="manifest" href="manifest.webmanifest">
+<link rel="apple-touch-icon" href="icons/apple-touch-icon.png">
+<link rel="icon" type="image/png" href="icons/icon-192.png">
+<meta name="apple-mobile-web-app-capable" content="yes">
+<meta name="mobile-web-app-capable" content="yes">
+<meta name="apple-mobile-web-app-title" content="tolstack">
+<meta name="apple-mobile-web-app-status-bar-style" content="default">
+<meta name="theme-color" content="#fbfaf6" media="(prefers-color-scheme: light)">
+<meta name="theme-color" content="#171614" media="(prefers-color-scheme: dark)">
+<meta property="og:title" content="tolstack guide">
+<meta property="og:description" content="1-D tolerance stack-up from a STEP assembly and 2D PDF drawings">
+<style>
+:root{--paper:#fbfaf6;--ink:#1d1c1a;--soft:#5d5a54;--line:#e3dfd5;--card:#ffffff;--accent:#309523;--code:#f1eee6}
+@media (prefers-color-scheme:dark){:root{--paper:#171614;--ink:#eeebe4;--soft:#a9a49a;--line:#35322d;--card:#201f1c;--accent:#8fe085;--code:#262420}}
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{margin:0;background:var(--paper);color:var(--ink);font:17px/1.6 -apple-system,BlinkMacSystemFont,"Segoe UI",Roboto,Helvetica,Arial,sans-serif}
+header.bar{position:sticky;top:0;z-index:5;display:flex;align-items:center;gap:12px;min-height:60px;padding:8px 16px;padding-top:max(8px,env(safe-area-inset-top));background:var(--paper);border-bottom:1px solid var(--line)}
+header.bar img{width:36px;height:36px;border-radius:9px;flex:none}
+header.bar .name{font-weight:700;font-size:18px;line-height:1.2;flex:1;min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+header.bar .name small{display:block;font-weight:500;font-size:13px;color:var(--soft)}
+header.bar a.source{flex:none;display:inline-flex;align-items:center;min-height:48px;padding:0 16px;border:1px solid var(--line);border-radius:24px;background:var(--card);color:var(--ink);font-size:15px;font-weight:600;text-decoration:none}
+main{max-width:760px;margin:0 auto;padding:20px 16px 40px}
+main img{max-width:100%;height:auto;border-radius:8px}
+main h1{font-size:30px;line-height:1.2;margin:24px 0 12px}
+main h2{font-size:23px;line-height:1.25;margin:36px 0 12px;padding-top:14px;border-top:1px solid var(--line)}
+main h3{font-size:19px;line-height:1.3;margin:26px 0 8px}
+main h4{font-size:17px;margin:22px 0 6px}
+main p,main li{overflow-wrap:anywhere}
+main a{color:var(--accent);text-underline-offset:3px;padding:6px 0}
+main p[align=center] a,main li>a:only-child{display:inline-block;padding:11px 3px}
+main a:has(>img){display:inline-block;padding:8px 0}
+main p[align=center] a:has(>img[width="100%"]){display:block;padding:0}
+main ul,main ol{padding-left:24px}
+main li{margin:6px 0}
+main blockquote{margin:16px 0;padding:4px 16px;border-left:4px solid var(--accent);color:var(--soft)}
+main code{font:14px/1.5 ui-monospace,SFMono-Regular,Menlo,Consolas,monospace;background:var(--code);padding:2px 5px;border-radius:5px;overflow-wrap:anywhere}
+main pre{background:var(--code);padding:14px;border-radius:10px;overflow-x:auto;-webkit-overflow-scrolling:touch}
+main pre code{background:none;padding:0;overflow-wrap:normal;white-space:pre}
+.scroll{overflow-x:auto;-webkit-overflow-scrolling:touch;margin:16px 0}
+main table{border-collapse:collapse;font-size:15px;min-width:100%}
+main th,main td{border:1px solid var(--line);padding:8px 10px;text-align:left;vertical-align:top}
+main th{background:var(--code)}
+main hr{border:0;border-top:1px solid var(--line);margin:28px 0}
+main kbd{font:13px ui-monospace,Menlo,monospace;border:1px solid var(--line);border-bottom-width:2px;border-radius:5px;padding:1px 5px}
+main details{margin:12px 0}
+main summary{cursor:pointer;min-height:44px;display:flex;align-items:center;font-weight:600}
+footer{max-width:760px;margin:0 auto;padding:18px 16px calc(28px + env(safe-area-inset-bottom));border-top:1px solid var(--line);color:var(--soft);font-size:14px}
+footer a{color:var(--soft)}
+</style>
+</head>
+<body>
+<header class="bar">
+<img src="icons/icon-192.png" alt="" width="36" height="36">
+<div class="name">tolstack<small>Guide</small></div>
+<a class="source" href="https://github.com/juw12/tolstack">GitHub</a>
+</header>
+<main id="guide">
+<h1 dir="auto">tolstack — tolerance stack-up from 3D + 2D, straight to Excel</h1>
+<p dir="auto">Pick a <strong>gap</strong> or <strong>step</strong> between two faces of a STEP assembly. tolstack finds the chain of parts<br>
+in between, reads the tolerances from your 2D drawings (or the general-tolerance table), and gives<br>
+you worst case, RSS, Cp/Cpk and Monte Carlo results in an Excel file with live formulas, a colour<br>
+section picture, the 2D evidence and a reviewer sign-off block.</p>
+<markdown-accessiblity-table><div class="scroll"><table role="table">
+<thead>
+<tr>
+<th>pick the faces and the chain</th>
+<th>check the chain (with section picture)</th>
+<th>result</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><a target="_blank" rel="noopener noreferrer" href="https://github.com/juw12/tolstack/blob/main/docs/app_step2.png"><img loading="lazy" src="app_step2.png" alt="step 2" style="max-width: 100%;"></a></td>
+<td><a target="_blank" rel="noopener noreferrer" href="https://github.com/juw12/tolstack/blob/main/docs/app_step3.png"><img loading="lazy" src="app_step3.png" alt="step 3" style="max-width: 100%;"></a></td>
+<td><a target="_blank" rel="noopener noreferrer" href="https://github.com/juw12/tolstack/blob/main/docs/app_result.png"><img loading="lazy" src="app_result.png" alt="result" style="max-width: 100%;"></a></td>
+</tr>
+</tbody>
+</table></div></markdown-accessiblity-table>
+<p dir="auto">Try it in one command: <code class="notranslate">python -m tolstack demo tolstack_demo --run</code> (writes a demo STEP, 2D PDFs, a config and the Excel report).</p>
+<h2 dir="auto">What it does</h2>
+<ol dir="auto">
+<li><strong>Reads the STEP assembly</strong>: every part, its name and its planar faces along the stack-up axis (X/Y/Z).</li>
+<li><strong>Finds contacts</strong>: a top face of one part and a bottom face of another at the same height (within<br>
+the <em>contact tolerance</em>, default 0.02 mm) whose <strong>real face outlines</strong> overlap — holes and L-shapes<br>
+included, so two parts whose bounding boxes overlap but whose material does not touch are not linked.</li>
+<li><strong>Lists the possible chains</strong> from your <em>From</em> face to your <em>To</em> face, ranked: fewest contacts first,<br>
+then the largest weakest contact area. You see every candidate and pick the one that matches how the<br>
+parts are really held. Each part contributes the distance between the two faces it uses. The chain is<br>
+always checked against the 3D (<code class="notranslate">sum of rows = To − From</code>); a chain that does not close is refused.</li>
+<li><strong>Finds tolerances</strong>:
+<ul dir="auto">
+<li>The 2D PDF whose file name matches the part name (or the one you assign) is searched for that<br>
+dimension: <code class="notranslate">62.73±0.1</code>, <code class="notranslate">2 +0/-0.05</code>, upper- or lower-only <code class="notranslate">4 +0.1/0</code> / <code class="notranslate">4 0/-0.05</code>, limit dimensions<br>
+<code class="notranslate">12.10/12.00</code> or <code class="notranslate">5.95~6.05</code>.<br>
+All candidates are ranked and shown; you can pick another one. The used one is cropped with a red box as evidence.</li>
+<li>Title-block notes ("TOLERANCES UNLESS SPECIFIED …") are never mistaken for a dimension.</li>
+<li>If the 3D nominal differs from the drawing nominal, the <strong>drawing limits are kept</strong> and the difference is noted.</li>
+<li>Drawings without a text layer (text exported as lines) are flagged; with Tesseract installed they can be OCR'd.</li>
+<li>Otherwise the <strong>general tolerance of that part's drawing</strong> applies: a size table under "TOLERANCES UNLESS<br>
+OTHERWISE SPECIFIED" / "未注公差", one ± value, ISO 2768 / JIS B 0405 / GB/T 1804 class f, m, c or v,<br>
+or a decimal-places rule (<code class="notranslate">X.XX ±0.05</code>). The source column names the drawing and the kind of note.</li>
+<li>Without a drawing, without a note, or for a size the note does not cover, the app's <strong>general tolerance<br>
+table</strong> applies (editable; default 0–10 ±0.05, 10–50 ±0.10, &gt;50 ±0.15). Following the drawing can be switched off.</li>
+<li><strong>GD&amp;T callouts</strong> (flatness, parallelism, profile, position …) found on the drawings are listed. They<br>
+are not in the stack unless you add one as a row (zone of total width t → nominal 0, ± t/2).</li>
+</ul>
+</li>
+<li><strong>Analyzes</strong>: nominal, mean shift for asymmetric tolerances, worst case, RSS, Cp, Cpk, predicted ppm and yield,<br>
+contribution %, a <strong>sensitivity table</strong> (which tolerance to tighten first) and a Monte Carlo % out of spec. Each row can be <code class="notranslate">normal</code> (±3σ by default), <code class="notranslate">uniform</code><br>
+or <code class="notranslate">triangular</code>.</li>
+<li><strong>Writes Excel</strong>: inputs in yellow, everything else a formula (edit a tolerance or a distribution and the<br>
+whole stack, Cp/Cpk and verdicts recalculate), PASS/FAIL, contribution chart, section picture,<br>
+"2D references" sheet, "Sensitivity" sheet, "Assumptions" sheet (method, chain used, other chains found, general table) and a<br>
+Prepared / Checked / Approved block. Prints landscape on one page width.</li>
+</ol>
+<p dir="auto">You stay in control: the chain is an editable table, so you can change values, flip a direction, or add<br>
+rows the CAD cannot see, such as PCB bow, switch travel, assembly float or glue thickness.</p>
+<h3 dir="auto">Without a STEP file, and after the stack-up</h3>
+<p dir="auto">Some stacks are not a chain of flat faces: the radial squeeze of a seal ring, a pin in a hole, a fit<br>
+between two diameters. For those, write the rows yourself in a config (<code class="notranslate">rows</code>) and run it the same way:</p>
+<ul dir="auto">
+<li><strong>Hand-written rows.</strong> Only <code class="notranslate">label</code> and <code class="notranslate">nominal</code> are needed. A row without a tolerance is looked up like<br>
+any other row: the 2D drawing of its <code class="notranslate">part</code>, then the general tolerance - and the source column says which.</li>
+<li><strong>Diameter rows.</strong> A size given as a diameter on the drawing but used on one side (radial) is written as<br>
+the diameter with <code class="notranslate">diameter: true</code>. The tolerance is looked up at the diameter, then size and tolerance are halved.</li>
+<li><strong>A locating fit</strong> (pilot / spigot, pin / hole) is two rows with opposite directions. With equal nominals<br>
+they cancel in the result and only add their tolerance - the usual contributor that is missing from a first stack.</li>
+<li><strong>Finding the locating fits in the CAD</strong>: <code class="notranslate">tolstack fits model.step PART_A PART_B</code> looks for coaxial bore / shaft<br>
+pairs and facing side walls between two parts across the stack axis, and reports the clearance on each side and<br>
+the total float per direction. <code class="notranslate">--rows</code> prints the fits as two rows each (<code class="notranslate">diameter: true</code>, so the one-side<br>
+float is (slot - tongue) / 2), ready to paste under <code class="notranslate">rows</code> or <code class="notranslate">extra</code>.</li>
+<li><strong>Measured parts</strong> (<code class="notranslate">measured</code>): groups of readings, such as failed and good units, are placed against the<br>
+RSS and worst-case range: inside or outside, and how many readings are beyond the limit.</li>
+<li><strong>A limit</strong> (<code class="notranslate">limit</code>): the result that still works, typed in or <strong>fitted from test points</strong> (x = the stack<br>
+result, y = what the test measured; straight line by least squares, limit = x where the line crosses <code class="notranslate">y_limit</code>).<br>
+The report gives the RSS and worst-case margin to the limit and the predicted % of assemblies beyond it.</li>
+<li><strong>Pictures</strong> (<code class="notranslate">pictures: true</code>): <code class="notranslate">&lt;output&gt;_chart.png</code> (ranges, limit, measured groups, contribution) and<br>
+<code class="notranslate">&lt;output&gt;_table.png</code> (the stack table and the result), sized for a mail or a slide.</li>
+</ul>
+<p dir="auto">The Excel file gets a <strong>Measured</strong> sheet (live: it reads the stack from the Stack-up sheet, the readings and the<br>
+fit points are inputs, the limit is <code class="notranslate">SLOPE</code> / <code class="notranslate">INTERCEPT</code>) and a <strong>Chart</strong> sheet. Try it:<br>
+<code class="notranslate">python -m tolstack run examples/seal_squeeze_config.yaml</code>, or in the web app choose <strong>Rows by hand (no STEP)</strong><br>
+and <strong>Fill in the example</strong>.</p>
+<h2 dir="auto">Install</h2>
+<div class="highlight highlight-source-shell" dir="auto"><pre class="notranslate">git clone https://github.com/juw12/tolstack.git
+<span class="pl-c1">cd</span> tolstack
+pip install -e <span class="pl-s"><span class="pl-pds">"</span>.[app]<span class="pl-pds">"</span></span>          <span class="pl-c"><span class="pl-c">#</span> or: pip install -r requirements.txt</span></pre></div>
+<p dir="auto"><strong>Windows, no command line:</strong> double-click <code class="notranslate">start.bat</code>. It creates <code class="notranslate">.venv</code>, installs tolstack and opens the app.</p>
+<p dir="auto"><strong>Docker:</strong></p>
+<div class="highlight highlight-source-shell" dir="auto"><pre class="notranslate">docker build -t tolstack <span class="pl-c1">.</span>
+docker run --rm -p 8501:8501 tolstack      <span class="pl-c"><span class="pl-c">#</span> then open http://localhost:8501</span></pre></div>
+<p dir="auto">Python 3.10–3.13. Works on Windows, macOS and Linux. Optional: <a href="https://github.com/tesseract-ocr/tesseract">Tesseract</a><br>
+for OCR of drawings without a text layer.</p>
+<h2 dir="auto">Use it</h2>
+<h3 dir="auto">Web app</h3>
+<div class="highlight highlight-source-shell" dir="auto"><pre class="notranslate">streamlit run app.py</pre></div>
+<ol dir="auto">
+<li>Sidebar: <strong>Demo assembly</strong> (to try it), upload the STEP and 2D PDFs - as loose files, a whole folder or one<br>
+zip / 7z, up to 2 GB per file on a PC (on the shared server the limit follows its memory, about 110 MB of<br>
+STEP in a 1 GiB pod) - <strong>or</strong> type the path to a STEP, a folder, a zip or a 7z on this computer.<br>
+Pointed at a project hand-over folder (<code class="notranslate">16 ... 3D</code>), tolstack also looks inside its zip / 7z files, drops<br>
+repeated copies of the same STEP, offers the newest full assembly first, and takes the drawings from the<br>
+<code class="notranslate">17 ... 2D</code> folder next to it.<br>
+<strong>Native Creo / Pro-E files</strong> (<code class="notranslate">.prt.N</code>, <code class="notranslate">.asm.N</code>): on a PC with Creo Parametric installed, the folder's<br>
+assemblies are listed and <strong>Convert with Creo</strong> has Creo save the chosen one as STEP in the background<br>
+(files are copied to a private folder first; yours is not changed). Set <code class="notranslate">TOLSTACK_CREO</code> to <code class="notranslate">parametric.exe</code><br>
+if Creo is not under <code class="notranslate">PTC\Creo *</code>. Creo needs a working license (a refusal by the license server is shown<br>
+as such) and can not open files saved by a newer Creo (each file's release is checked first). tolstack does not decode Creo files itself - their geometry format is PTC's own.<br>
+A saved YAML config can be loaded at the top of the sidebar to restore an analysis.</li>
+<li>Choose <strong>Step</strong> or <strong>Gap</strong>, then the <em>From</em> part + face and the <em>To</em> part + face; set LSL/USL (optional).<br>
+The <strong>3D view</strong> next to the lists highlights the picked parts and faces and follows every change (toggle it off<br>
+for a very large assembly). Faces are picked in the lists, not by clicking in the view.</li>
+<li>Pick the chain from the ranked list (and exclude parts that must not be in it), then <strong>Build chain from 3D</strong>.<br>
+A section picture of the chain appears right away.</li>
+<li>Check the table. Open "2D drawings" to assign a drawing to a part or choose another dimension candidate.</li>
+<li>Read the result (nominal, WC, RSS, verdict, Cpk, Monte Carlo), then <strong>Create Excel</strong>.<br>
+<strong>Download this analysis as a config</strong> saves a portable YAML: it names the STEP and the drawings<br>
+(<code class="notranslate">drawings/</code>) instead of a path on one computer, so it runs from any folder that holds those files.</li>
+<li>Optional: "GD&amp;T on the drawings" adds a callout as a row; "Sensitivity" shows what each row does to the result.</li>
+</ol>
+<p dir="auto"><strong>Rows by hand (no STEP)</strong> in the sidebar opens a table for a stack written by hand: label, part, nominal,<br>
+tolerances, direction, <code class="notranslate">diameter</code> and distribution per row, LSL / USL, and (optional) measured groups and a<br>
+functional limit - typed in or fitted from test points. <strong>Calculate</strong> gives the same result, Excel and pictures<br>
+as <code class="notranslate">tolstack run</code>; the analysis downloads as a config. A saved config with <code class="notranslate">rows</code> loads straight into this page.</p>
+<p dir="auto">Each browser session works in its own folder on the server; folders idle for a day are removed.</p>
+<h3 dir="auto">Command line / batch</h3>
+<div class="highlight highlight-source-shell" dir="auto"><pre class="notranslate">python -m tolstack demo examples/demo --run                            <span class="pl-c"><span class="pl-c">#</span> demo STEP + 2D PDFs + config -&gt; Excel</span>
+python -m tolstack faces examples/demo/demo_assembly.step --axis z     <span class="pl-c"><span class="pl-c">#</span> parts, faces, contact count</span>
+python -m tolstack paths examples/demo_config.yaml                     <span class="pl-c"><span class="pl-c">#</span> candidate chains</span>
+python -m tolstack run examples/demo_config.yaml                       <span class="pl-c"><span class="pl-c">#</span> -&gt; examples/out/demo_ta.xlsx</span>
+python -m tolstack run examples/seal_squeeze_config.yaml               <span class="pl-c"><span class="pl-c">#</span> hand-written rows, no STEP -&gt; Excel + 2 PNG</span>
+python -m tolstack fits model.step COVER FRAME --rows                  <span class="pl-c"><span class="pl-c">#</span> locating fits between two parts -&gt; rows</span></pre></div>
+<p dir="auto">After <code class="notranslate">pip install -e .</code> the same commands work as <code class="notranslate">tolstack demo|faces|paths|fits|run</code>.</p>
+<h3 dir="auto">Config file (version 1)</h3>
+<markdown-accessiblity-table><div class="scroll"><table role="table">
+<thead>
+<tr>
+<th>key</th>
+<th>meaning</th>
+</tr>
+</thead>
+<tbody>
+<tr>
+<td><code class="notranslate">version</code></td>
+<td>config schema version, <code class="notranslate">1</code></td>
+</tr>
+<tr>
+<td><code class="notranslate">step</code>, <code class="notranslate">axis</code></td>
+<td>STEP file (relative to the config) and stack-up axis <code class="notranslate">x</code>/<code class="notranslate">y</code>/<code class="notranslate">z</code></td>
+</tr>
+<tr>
+<td><code class="notranslate">from</code>, <code class="notranslate">to</code></td>
+<td><code class="notranslate">{part, face: top/bottom, level}</code>; result = to − from</td>
+</tr>
+<tr>
+<td><code class="notranslate">exclude</code></td>
+<td>parts the chain must not pass through</td>
+</tr>
+<tr>
+<td><code class="notranslate">chain_option</code></td>
+<td>which ranked chain to use (1 = best), see <code class="notranslate">tolstack paths</code></td>
+</tr>
+<tr>
+<td><code class="notranslate">contact_tol</code></td>
+<td>faces closer than this (mm) count as touching</td>
+</tr>
+<tr>
+<td><code class="notranslate">spec</code></td>
+<td><code class="notranslate">{lsl, usl}</code></td>
+</tr>
+<tr>
+<td><code class="notranslate">drawings</code>, <code class="notranslate">drawing_map</code>, <code class="notranslate">ocr</code></td>
+<td>PDF globs; <code class="notranslate">{PART: file.pdf}</code> overrides (<code class="notranslate">''</code> = no drawing); OCR on/off</td>
+</tr>
+<tr>
+<td><code class="notranslate">general_tolerance</code></td>
+<td><code class="notranslate">[[from, to, ±tol], ...]</code> - the app table</td>
+</tr>
+<tr>
+<td><code class="notranslate">general_from_drawing</code></td>
+<td><code class="notranslate">true</code> (default): use the general-tolerance note of each part's drawing before the table</td>
+</tr>
+<tr>
+<td><code class="notranslate">sigma_level</code>, <code class="notranslate">mc_samples</code></td>
+<td>tolerance = ±k σ for <code class="notranslate">normal</code> rows; Monte Carlo sample count</td>
+</tr>
+<tr>
+<td><code class="notranslate">extra</code></td>
+<td>rows that are not part thickness (bow, travel, float …); same keys as <code class="notranslate">rows</code></td>
+</tr>
+<tr>
+<td><code class="notranslate">rows</code></td>
+<td>a stack written by hand, <strong>instead of</strong> <code class="notranslate">step</code> / <code class="notranslate">from</code> / <code class="notranslate">to</code>: <code class="notranslate">{label, nominal}</code> plus optional <code class="notranslate">part</code>, <code class="notranslate">description</code>, <code class="notranslate">tol_plus</code>, <code class="notranslate">tol_minus</code>, <code class="notranslate">direction</code> (+1 / -1), <code class="notranslate">dist</code>, <code class="notranslate">source</code>, <code class="notranslate">diameter</code></td>
+</tr>
+<tr>
+<td><code class="notranslate">diameter</code> (in a row)</td>
+<td><code class="notranslate">true</code>: nominal and tolerance are written as a diameter and halved for a one-side stack</td>
+</tr>
+<tr>
+<td><code class="notranslate">measured</code></td>
+<td>groups of measured results: <code class="notranslate">[{name, values: [...]}]</code> or <code class="notranslate">[{name, min, max}]</code>, optional <code class="notranslate">result</code> text</td>
+</tr>
+<tr>
+<td><code class="notranslate">limit</code></td>
+<td><code class="notranslate">{value}</code> or a fit <code class="notranslate">{x: [...], y: [...], y_limit}</code>; optional <code class="notranslate">side</code> (<code class="notranslate">lower</code> default / <code class="notranslate">upper</code>) and <code class="notranslate">label</code></td>
+</tr>
+<tr>
+<td><code class="notranslate">pictures</code></td>
+<td><code class="notranslate">true</code>: also write <code class="notranslate">&lt;output&gt;_chart.png</code> and <code class="notranslate">&lt;output&gt;_table.png</code></td>
+</tr>
+<tr>
+<td><code class="notranslate">overrides</code></td>
+<td>per row label, e.g. <code class="notranslate">{B: {tol_plus: 0.03, tol_minus: 0.03, dist: uniform, source: "CPK data"}}</code></td>
+</tr>
+<tr>
+<td><code class="notranslate">section</code>, <code class="notranslate">output</code>, <code class="notranslate">title</code>, <code class="notranslate">project</code>, <code class="notranslate">name</code>, <code class="notranslate">type</code>, <code class="notranslate">author</code></td>
+<td>report options</td>
+</tr>
+</tbody>
+</table></div></markdown-accessiblity-table>
+<p dir="auto">Unknown keys are rejected, so a typo cannot silently change a result. See <code class="notranslate">examples/demo_config.yaml</code><br>
+and <code class="notranslate">examples/seal_squeeze_config.yaml</code>.</p>
+<h2 dir="auto">Limits (read before trusting a result)</h2>
+<ul dir="auto">
+<li><strong>1-D stack-ups only</strong>, along one axis. No angles, no 3D variation. GD&amp;T is read from the drawing text and<br>
+listed; it enters the stack only when you add a callout as a row, and only as a simple ± t/2 zone<br>
+(no datum shift, no material-condition bonus). The GDT symbol-font mapping is not yet proven on many real drawings.</li>
+<li>The STEP <strong>unit check only warns</strong>. Geometry is always handled in mm; check one known dimension when warned.</li>
+<li>A tolerance stacked on two text lines in the PDF (upper over lower) is not merged; pick the value by hand.</li>
+<li>Contacts are <strong>planar faces normal to the axis</strong>. Screws, snaps, springs, cylindrical seats and switch<br>
+actuation points are not contacts in the CAD; add them as extra rows.</li>
+<li>2D lookup needs PDFs with a <strong>text layer</strong> (or Tesseract for OCR). Check the source column and the 2D evidence sheet.</li>
+<li>The <strong>general-tolerance note</strong> is found by pattern matching and is tested on synthetic drawings only. Check the<br>
+source column. The decimal-places rule needs the dimension to be found on the drawing; ISO 2768 has no value<br>
+below 0.5 mm, so such sizes use the app table.</li>
+<li>A dimension that is not on the 2D is taken from the 3D with the general tolerance. That is common<br>
+practice, but it is still an assumption, and the report says so in the source column.</li>
+<li>Cp/Cpk and ppm assume the sum is normally distributed; Monte Carlo uses the per-row distributions.</li>
+<li><strong>Hand-written rows are not checked against any 3D.</strong> The signs and the list of rows are yours; a missing<br>
+contributor (a locating fit, a float) makes the range too narrow.</li>
+<li><strong><code class="notranslate">tolstack fits</code></strong> reads axis-aligned geometry only: cylinders whose axis runs along the stack axis and walls<br>
+whose normal is X, Y or Z. Two walls overlap when their bounding boxes do, so an L-shaped or holed face can be<br>
+listed although the walls do not really face each other - check it in a section. Drafted (tapered) walls are<br>
+not planar-normal to X / Y and are not found. The direction of the two rows depends on your stack: check it.</li>
+<li>A <strong>fitted limit</strong> is a straight line through your test points. Read R² on the Measured sheet, and do not use the<br>
+limit outside the tested range. The % beyond the limit assumes a normal sum, like ppm.</li>
+<li>Results are an engineering estimate. They do not replace a formal tolerance analysis or measured data (FAI/CPK).</li>
+</ul>
+<h2 dir="auto">Development</h2>
+<div class="highlight highlight-source-shell" dir="auto"><pre class="notranslate">pip install -e <span class="pl-s"><span class="pl-pds">"</span>.[app,dev]<span class="pl-pds">"</span></span>
+pytest -q
+ruff check <span class="pl-c1">.</span>
+mypy</pre></div>
+<p dir="auto">See <code class="notranslate">CONTRIBUTING.md</code> for the code layout and the rules for changes, and <code class="notranslate">CHANGELOG.md</code> for what changed.</p>
+<p dir="auto">MIT licence.</p>
+</main>
+<footer>
+This is the tolstack guide: the project's README, laid out to read on a phone and kept for when there is no connection.
+It is the README of 2026-11-13. tolstack itself is installed and run the way the guide says; the code is at
+<a href="https://github.com/juw12/tolstack">github.com/juw12/tolstack</a>.
+</footer>
+<script>
+if ('serviceWorker' in navigator) navigator.serviceWorker.register('sw.js');
+</script>
+</body>
+</html>
