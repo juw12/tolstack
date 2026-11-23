@@ -38,6 +38,8 @@ packages = ["tolstack"]
 [tool.ruff]
 line-length = 130
 target-version = "py310"
+# desktop/ and android/ are the stamped window around the guide page (hone's shells), kept as stamped
+extend-exclude = ["desktop", "android"]
 
 [tool.ruff.lint]
 select = ["E", "F", "W", "I", "B"]
