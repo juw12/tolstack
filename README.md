@@ -11,6 +11,15 @@ section picture, the 2D evidence and a reviewer sign-off block.
 
 Try it in one command: `python -m tolstack demo tolstack_demo --run` (writes a demo STEP, 2D PDFs, a config and the Excel report).
 
+## Get it on your device
+
+- **Windows:** [`tolstack-Windows-Setup.exe`](https://github.com/juw12/tolstack/releases/download/desktop/tolstack-Windows-Setup.exe) (no admin needed; if Windows says it protected your PC, choose *More info → Run anyway*), or without installing [`tolstack-Windows-Portable.zip`](https://github.com/juw12/tolstack/releases/download/desktop/tolstack-Windows-Portable.zip).
+- **Mac:** [`tolstack-macOS-AppleSilicon.dmg`](https://github.com/juw12/tolstack/releases/download/desktop/tolstack-macOS-AppleSilicon.dmg) (M1 and newer) or [`tolstack-macOS-Intel.dmg`](https://github.com/juw12/tolstack/releases/download/desktop/tolstack-macOS-Intel.dmg). The first time, macOS blocks it because it is not notarized: **System Settings → Privacy & Security → Open Anyway**.
+- **Android:** [`tolstack-android.apk`](https://github.com/juw12/tolstack/releases/download/android/tolstack-android.apk): open the file on the phone and allow your browser to install apps once.
+- **iPhone:** open https://juw12.github.io/tolstack/ in Safari, tap Share, then **Add to Home Screen**.
+
+The Windows, Mac and Android apps are the web app in its own window ([`desktop/`](desktop/README.md), [`android/`](android/README.md)) and change with it. Each build is opened on GitHub's machines before it is published: on Windows and on a Mac the page loads, the app starts and can store data; on an Android emulator it installs, opens and stays up. They are not code-signed or notarised, and no real phone or PC has run them yet.
+
 ## What it does
 
 1. **Reads the STEP assembly**: every part, its name and its planar faces along the stack-up axis (X/Y/Z).
