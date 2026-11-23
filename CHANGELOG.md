@@ -3,6 +3,15 @@
 All notable changes to tolstack. The format follows [Keep a Changelog](https://keepachangelog.com/en/1.1.0/);
 versions follow [Semantic Versioning](https://semver.org/). Config files carry their own `version` (currently 1).
 
+## [0.8.1] - 2026-11-23
+
+### Fixed
+- **A contact could get the outline of a face of an earlier model.** The true outline of a face was kept in a table
+  keyed by the memory id of its shape; Python gives the id of a freed object to a new one, so in a session that
+  loads more than one model (the web app, the tests) a face could be measured against a stale outline and report a
+  wrong overlap area. Seen as a test that failed now and then on any system (896 mm2 instead of 1200). The outline is
+  now kept on the face itself.
+
 ## [0.8.0] - 2026-11-13
 
 The stack written by hand gets the web app, and the locating fits it needs can be found in the CAD.

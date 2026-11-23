@@ -300,3 +300,35 @@ def test_stepped_seat_gives_one_option_per_contact_level(tmp_path):
     for option in options:
         chain = build_chain(start, end, model.parts, model.contacts, steps=option.steps)
         assert sum(c.direction * c.nominal for c in chain) == pytest.approx(10.0)
+
+
+def test_outline_is_kept_on_the_face_not_by_object_id(tmp_path):
+    """The outline of a face must come from that face. It was looked up by id(shape), and Python hands the id
+    of a freed object to a new one: a later model could get an earlier model's outline (seen as 896 mm2
+    instead of 1200 in the test above, now and then, on any system)."""
+    import sys
+
+    from OCP.BRepAlgoAPI import BRepAlgoAPI_Cut
+
+    sys.path.insert(0, str(Path(__file__).parents[1] / "examples"))
+    import make_demo
+
+    from tolstack import cad
+    from tolstack.pipeline import load_model
+
+    assert not hasattr(cad, "_OUTLINES")          # no table shared between models
+
+    def ring_on_lid(holed: bool, name: str) -> float:
+        plate = make_demo.box(0, 0, 0, 40, 40, 5)
+        if holed:
+            plate = BRepAlgoAPI_Cut(plate, make_demo.box(10, 10, -1, 30, 30, 6)).Shape()
+        step = make_demo.write_step(tmp_path / name, [("RING", plate), ("LID", make_demo.box(0, 0, 5, 40, 40, 7))])
+        model = load_model(str(step), "z")
+        contact = [c for c in model.contacts if model.parts[c.lower].name == "RING"][0]
+        assert contact.lower_face.outline_built or contact.upper_face.outline_built
+        return contact.overlap
+
+    # the same part and face numbers again and again, with and without the hole
+    for turn in range(8):
+        assert ring_on_lid(False, f"plate{turn}.step") == pytest.approx(40 * 40, rel=1e-3)
+        assert ring_on_lid(True, f"ring{turn}.step") == pytest.approx(40 * 40 - 20 * 20, rel=1e-3)

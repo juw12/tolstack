@@ -58,6 +58,10 @@ class PlanarFace:
     area: float
     shape: TopoDS_Face | None = field(default=None, repr=False, compare=False)
     axis: str = "z"
+    # The true outline, kept on the face once face_outline has built it (None can be the answer, so a flag says
+    # whether it was built).
+    outline: object = field(default=None, repr=False, compare=False)
+    outline_built: bool = field(default=False, repr=False, compare=False)
 
     @property
     def kind(self) -> str:
@@ -213,15 +217,15 @@ def planar_faces(part: Part, axis: str, min_area: float = 0.01) -> list[PlanarFa
     return result
 
 
-_OUTLINES: dict = {}
-
-
 def face_outline(face: PlanarFace, deflection: float = 0.02):
     """True 2-D outline of a planar face (holes included) as a shapely geometry, projected on the
-    plane normal to the stack-up axis. Built from the face triangulation; None if meshing fails."""
-    key = (id(face.shape), face.part, face.face_id)
-    if key in _OUTLINES:
-        return _OUTLINES[key]
+    plane normal to the stack-up axis. Built from the face triangulation; None if meshing fails.
+
+    The outline is kept on the face itself. It used to sit in a table keyed by id(face.shape): Python gives
+    the id of a freed object to a new one, so a face of a later model could get the outline of a face of an
+    earlier model with the same part and face numbers, and with it a wrong contact area."""
+    if face.outline_built:
+        return face.outline
     outline = None
     if face.shape is not None:
         from shapely.geometry import Polygon
@@ -248,7 +252,7 @@ def face_outline(face: PlanarFace, deflection: float = 0.02):
                     triangles.append(tri)
             if triangles:
                 outline = unary_union(triangles).buffer(0)
-    _OUTLINES[key] = outline
+    face.outline, face.outline_built = outline, True
     return outline
 
 
